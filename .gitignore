@@ -1,0 +1,11 @@
+.build/
+dist/
+.DS_Store
+
+node_modules/
+.env*
+*.zip
+*.dmg
+*.p12
+*.p8
+*.mobileprovision
