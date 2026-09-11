@@ -2,6 +2,14 @@
 
 A native macOS menu-bar window switcher. Search running apps and their window titles, then press Return to jump to a result. Window search runs locally. Optional AI objective suggestions send only selected metadata to your configured Convex backend. Requires macOS 14 or later.
 
+![Velocity window search, with agent attention first and playing audio next](docs/screenshots/window-switcher.png)
+
+Switch between objectives with **Control–Option–O**, bring related windows forward, and mark finished work done.
+
+![Velocity objective switcher showing related windows grouped by task](docs/screenshots/objectives.png)
+
+*Native app views rendered with fictional sample data. Regenerate with `bash scripts/screenshots.sh` on macOS.*
+
 ## Download
 
 Download the macOS Apple silicon build from [Releases](https://github.com/magicseth/velocity/releases). Unzip it and move **Terminal Velocity.app** to Applications. The app retains its original name and bundle identifier in this preview.
