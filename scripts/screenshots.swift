@@ -60,6 +60,6 @@ import ApplicationServices
         ]
         model.objectiveMode = true
         model.focusObjectives = true
-        try render("objectives")
+        if Features.experimentalAgents { try render("objectives") }
     }
 }

@@ -1,12 +1,8 @@
 # Velocity
 
-A native macOS menu-bar window switcher. Search running apps and their window titles, then press Return to jump to a result. Window search runs locally. Optional AI objective suggestions send only selected metadata to your configured Convex backend. Requires macOS 14 or later.
+A native macOS menu-bar window switcher. Search running apps and their window titles, then press Return to jump to a result. The public build runs locally and makes no AI requests. Requires macOS 14 or later.
 
 ![Velocity window search, with agent attention first and playing audio next](docs/screenshots/window-switcher.png)
-
-Switch between objectives with **Control–Option–O**, bring related windows forward, and mark finished work done.
-
-![Velocity objective switcher showing related windows grouped by task](docs/screenshots/objectives.png)
 
 *Native app views rendered with fictional sample data. Regenerate with `bash scripts/screenshots.sh` on macOS.*
 
@@ -45,15 +41,6 @@ On first launch, enable **Terminal Velocity** in **System Settings → Privacy &
 
 The list includes windows exposed by each app’s Accessibility implementation, including minimized and hidden windows, plus named tab controls exposed in window chrome. Tab results bring the containing window forward, then select the requested tab. Apps with no exposed windows appear as application results. Apps that do not expose accessible tab controls cannot have their inactive tabs indexed this way. Full-screen windows and other Spaces are subject to macOS and the target app’s window-switching behavior.
 
-## Objective switcher
-
-**Control–Option–O** opens the objective switcher. It stays open when you release the keys. Use arrows, Tab, or Control–Option–O to cycle; Return focuses and Escape cancels. The menu-bar menu has **Switch Objectives** too. Named window groups are objectives; recognized ungrouped agent terminals are listed as individual objectives.
-
-Explicit title-based input requests rank first. An observed Claude working-to-idle title transition creates a **New handoff**; an initially idle session does not. This is a heuristic and cannot detect every response or establish that you have read it. **Reviewed** clears that handoff without answering or approving anything. Merely opening an objective does not clear it.
-
-**Done** or **Command–D** removes an objective from the normal switcher. **Show done** or `@done` explicitly reveals it; **Reopen** makes it active again. Done/review state is saved locally. Completing an objective does not close its windows or stop its agents.
-
-Optional **Focus: hide other work** hides unrelated apps and minimizes other known windows in member apps. **Restore windows**, **Restore Other Windows** in the menu, switching objectives, or a normal quit restores changes made by TV. Crashes/force-quits may leave windows hidden/minimized; normal macOS controls can restore them. Native Spaces/full-screen restrictions still apply.
 
 ## Agent attention and prompts
 
@@ -63,11 +50,6 @@ Codex’s `[ ! ] Action Required` and `[ . ] Action Required` title prefixes ind
 
 Select a terminal and press **Command–I** (or right-click → **Inspect prompt…**) for the last 6,000 characters of accessible terminal text. This is a manually refreshed snapshot and may include other recent output. Inactive tabs without accessible selection/text require opening first. **Open to answer** focuses the terminal; this app does not send approval keystrokes or answer prompts automatically. Preview text stays in memory.
 
-## Window groups
-
-Select a window result and press **Command–G**, or right-click it and choose **Edit window group…**. Name the group, select at least two windows, and save. Reopen the editor to change members or dissolve the group. Each window belongs to one group.
-
-Choosing a member in Velocity, selecting it in macOS, or dragging the focused member brings its companions forward without moving or resizing them. The chosen window stays on top. External changes are detected on the one-second foreground check. Groups identify exact open windows, including windows with identical titles; objective names and member fingerprints are saved locally. On relaunch, only unique matching windows are reattached; changed or ambiguous titles may need regrouping. Closed windows are not reopened. Other Spaces/full-screen behavior remains subject to macOS.
 
 ## Chrome, Safari, and audio
 
@@ -91,15 +73,10 @@ swift test
 
 The diagnostic command needs its own Accessibility authorization when launched from a terminal. Live window discovery and focusing require an interactive authorized macOS session.
 
-## AI objective suggestions
-
-Open **AI groups** in search, or **Suggest groups** in the objective switcher. Review the selected window metadata, request suggestions through Convex AI Gateway, rename or select the proposals you want, then create the objectives. Existing groups are preserved. Suggestions group whole windows; tab titles provide context. Up to 120 ungrouped windows are considered per pass, interleaved across apps.
-
-AI suggestions require your own Convex deployment and device token; downloads do not include a shared hosted service. Device authentication is stored in Keychain. Terminal buffers, document contents, and page bodies are not sent. See [backend setup](backend/README.md) for deployment details.
 
 ## Agent notifications
 
-When a terminal title reports **Action Required**, TV sends a native macOS notification with sound and keeps an attention count in the menu bar. Clicking the banner or count opens Attention. Window/tab duplicates and blinking title markers produce one alert; brief title-read gaps do not retrigger it. Done objectives are excluded. Idle titles alone do not notify because they do not prove an agent has a question.
+When a terminal title reports **Action Required**, TV sends a native macOS notification with sound and keeps an attention count in the menu bar. Clicking the banner opens Attention; the menu-bar icon opens All apps with attention first. Window/tab duplicates and blinking title markers produce one alert; brief title-read gaps do not retrigger it. Idle titles alone do not notify because they do not prove an agent has a question.
 
 Allow notifications when macOS asks. Right-click TV’s menu-bar icon for **Agent Notifications**, **Test Notification**, and **Notification Settings**. macOS notification settings and Focus control banner and sound delivery. Detection runs while TV is running and has Accessibility access; no terminal contents are sent to a server for notifications.
 
@@ -111,3 +88,7 @@ Opening Velocity from its shortcut or menu-bar icon resets to **All apps**. Agen
 Click **Projects** or search `@projects` to find Claude projects. TV indexes project names and links exposed by Claude’s sidebar and All projects screen, including its Chat/Cowork and Code modes, and retains discovered metadata locally across mode changes and app restarts. Open **All projects** in Claude to expose projects missing from the sidebar. This is an index of discovered projects, not a full account API; deleted projects can remain cached until the index is refreshed in a future version. Project selection navigates within Claude without sending a message.
 
 Project indexing currently supports Claude. ChatGPT/Codex remains available through ordinary window search.
+
+## Experimental builds
+
+Objectives, window grouping, AI grouping, and title-derived agent synopses are disabled in public downloads. They remain available together through a build-time opt-in; there is no public settings toggle. See [experimental build instructions](docs/experimental.md).

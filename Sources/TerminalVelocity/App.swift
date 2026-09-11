@@ -42,9 +42,11 @@ final class SearchPanel: NSPanel {
     ]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if Features.experimentalAgents {
         do {
             if let endpoint = try AIGrouping.importConfiguration(arguments: CommandLine.arguments) { model.aiEndpoint = endpoint }
         } catch { model.message = "AI grouping setup failed: " + error.localizedDescription }
+        }
         NSApp.setActivationPolicy(.accessory)
         panel = SearchPanel(contentRect: NSRect(x: 0, y: 0, width: 680, height: 510),
                             styleMask: [.titled, .fullSizeContentView], backing: .buffered, defer: false)
@@ -96,7 +98,7 @@ final class SearchPanel: NSPanel {
         NSApp.mainMenu = menu
         installHotkeyHandler()
         registerShortcut(UserDefaults.standard.integer(forKey: "shortcut"))
-        if RegisterEventHotKey(UInt32(kVK_ANSI_O), UInt32(controlKey | optionKey),
+        if Features.experimentalAgents && RegisterEventHotKey(UInt32(kVK_ANSI_O), UInt32(controlKey | optionKey),
             EventHotKeyID(signature: 0x54564C43, id: 2), GetApplicationEventTarget(), 0, &objectiveHotKey) != noErr {
             model.message = "Objective shortcut unavailable. Use the menu-bar menu."
         }
@@ -133,7 +135,7 @@ final class SearchPanel: NSPanel {
                 if event.keyCode == 53 { self.model.editingGroup = false; return nil }
                 return event
             }
-            if flags == .command && event.charactersIgnoringModifiers == "g" {
+            if Features.experimentalAgents && flags == .command && event.charactersIgnoringModifiers == "g" {
                 if self.model.results.indices.contains(self.model.selected) { self.model.editGroup(self.model.results[self.model.selected]) }
                 return nil
             }
@@ -208,7 +210,7 @@ final class SearchPanel: NSPanel {
                 guard !self.panel.isVisible,
                       NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier,
                       let entry else { return }
-                if self.lastGroupedWindow != entry.windowKey || self.lastGroupedPosition != position {
+                if Features.experimentalAgents && (self.lastGroupedWindow != entry.windowKey || self.lastGroupedPosition != position) {
                     self.lastGroupedPosition = position
                     self.lastGroupedWindow = entry.windowKey
                     let companions = WindowGroup.companions(of: entry, groups: self.model.groups, entries: self.model.all)
@@ -256,14 +258,14 @@ final class SearchPanel: NSPanel {
         if NSApp.currentEvent?.type == .rightMouseUp {
             let menu = NSMenu()
             add("Search Windows…", #selector(toggle), to: menu)
-            add("Switch Objectives…  ⌃⌥O", #selector(switchObjectives), to: menu)
+            if Features.experimentalAgents { add("Switch Objectives…  ⌃⌥O", #selector(switchObjectives), to: menu) }
             add("Attention (\(attentionCount))", #selector(showAttention), to: menu)
             let notifications = NSMenuItem(title: "Agent Notifications", action: #selector(toggleNotifications), keyEquivalent: "")
             notifications.target = self; notifications.state = attentionNotifications.enabled ? .on : .off
             menu.addItem(notifications)
             add("Test Notification", #selector(testNotification), to: menu)
             add("Notification Settings…", #selector(notificationSettings), to: menu)
-            add("Restore Other Windows", #selector(restoreWindows), to: menu)
+            if Features.experimentalAgents { add("Restore Other Windows", #selector(restoreWindows), to: menu) }
             let shortcut = NSMenuItem(title: "Keyboard Shortcut", action: nil, keyEquivalent: "")
             let choices = NSMenu()
             for (index, value) in shortcuts.enumerated() {
@@ -296,6 +298,7 @@ final class SearchPanel: NSPanel {
     @objc func testNotification() { attentionNotifications.test() }
     @objc func notificationSettings() { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")!) }
     func observeAttention() {
+        guard Features.experimentalAgents else { attentionNotifications.observe(model.all); return }
         let doneWindows = Set(model.groups.filter { model.ledger.records[$0.id.uuidString]?.done == true }.flatMap(\.members))
         attentionNotifications.observe(model.all.filter { entry in
             if let key = entry.windowKey, doneWindows.contains(key) { return false }
@@ -308,6 +311,7 @@ final class SearchPanel: NSPanel {
     func applicationWillTerminate(_ notification: Notification) { objectiveFocus.restore() }
     @objc func restoreWindows() { objectiveFocus.restore() }
     @objc func switchObjectives() {
+        guard Features.experimentalAgents else { return }
         if panel.isVisible && model.objectiveMode { model.moveObjective(1); return }
         show()
         model.objectiveQuery = ""
@@ -316,6 +320,7 @@ final class SearchPanel: NSPanel {
         model.objectiveMode = true
     }
     func activateObjective(_ item: ObjectiveItem) {
+        guard Features.experimentalAgents else { return }
         guard let primary = item.entries.first(where: { $0.attention == .needsInput }) ?? item.entries.first else {
             model.message = "This objective has no open windows."; return
         }
@@ -458,7 +463,7 @@ final class SearchPanel: NSPanel {
             }
             return
         }
-        let companions = WindowGroup.companions(of: entry, groups: model.groups, entries: model.all)
+        let companions = Features.experimentalAgents ? WindowGroup.companions(of: entry, groups: model.groups, entries: model.all) : []
         Task { @MainActor in
             if await focusGroup(companions, selected: entry) {
                 model.memory.observe(entry.memoryKey)

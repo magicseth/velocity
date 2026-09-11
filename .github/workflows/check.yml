@@ -9,6 +9,8 @@ jobs:
       - uses: actions/checkout@v4
       - run: swift test
       - run: CODE_SIGN_IDENTITY=- bash scripts/build.sh
+      - run: swift test -Xswiftc -DVELOCITY_EXPERIMENTAL
+      - run: VELOCITY_EXPERIMENTAL=1 CODE_SIGN_IDENTITY=- bash scripts/build.sh
   backend:
     runs-on: ubuntu-latest
     defaults:

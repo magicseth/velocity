@@ -70,6 +70,7 @@ enum SearchScope: String, CaseIterable {
     var editingGroupID: UUID?
 
     func editGroup(_ entry: WindowEntry) {
+        guard Features.experimentalAgents else { return }
         guard let key = entry.windowKey else { return }
         let group = groups.first { $0.members.contains(key) }
         editingGroupID = group?.id
@@ -80,6 +81,7 @@ enum SearchScope: String, CaseIterable {
     }
 
     func saveGroup() {
+        guard Features.experimentalAgents else { return }
         let name = groupName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, groupMembers.count >= 2 else { return }
         // Each window belongs to one group; reassignment removes its old membership.
@@ -103,12 +105,13 @@ enum SearchScope: String, CaseIterable {
     let memory: SelectionMemory
     init(memory: SelectionMemory = SelectionMemory()) {
         self.memory = memory
-        if let data = UserDefaults.standard.data(forKey: "objectiveGroups"),
+        if Features.experimentalAgents, let data = UserDefaults.standard.data(forKey: "objectiveGroups"),
            let restored = try? JSONDecoder().decode([WindowGroup].self, from: data) {
             groups = restored.map { var group = $0; group.members = []; return group }
         }
     }
     func persistGroups() {
+        guard Features.experimentalAgents else { return }
         for index in groups.indices {
             let fingerprints = all.filter { !$0.isTab && $0.windowKey.map { groups[index].members.contains($0) } == true }.map(\.groupFingerprint)
             if !fingerprints.isEmpty { groups[index].rememberedMembers = Set(fingerprints) }
@@ -116,6 +119,7 @@ enum SearchScope: String, CaseIterable {
         if let data = try? JSONEncoder().encode(groups) { UserDefaults.standard.set(data, forKey: "objectiveGroups") }
     }
     func reconnectGroups() {
+        guard Features.experimentalAgents else { return }
         let candidates = Dictionary(grouping: all.filter { !$0.isTab && $0.windowKey != nil }, by: \.groupFingerprint)
         for index in groups.indices where groups[index].members.isEmpty {
             groups[index].members = Set(groups[index].rememberedMembers.compactMap { fingerprint in
@@ -195,7 +199,7 @@ struct PaletteView: View {
     @FocusState private var searching: Bool
 
     var body: some View {
-        if model.showAIGrouping { AIGroupingView(model: model) } else if model.objectiveMode { ObjectiveView(model: model) } else { windowPalette }
+        if Features.experimentalAgents && model.showAIGrouping { AIGroupingView(model: model) } else if Features.experimentalAgents && model.objectiveMode { ObjectiveView(model: model) } else { windowPalette }
     }
 
     private var windowPalette: some View {
@@ -235,7 +239,7 @@ struct PaletteView: View {
 
             if let entry = model.previewEntry {
                 preview(entry)
-            } else if model.editingGroup {
+            } else if Features.experimentalAgents && model.editingGroup {
                 groupEditor
             } else if model.showHelp {
                 helpView
@@ -264,7 +268,7 @@ struct PaletteView: View {
                                     .background(index == model.selected ? Color.accentColor.opacity(0.14) : .clear, in: RoundedRectangle(cornerRadius: 9))
                                     .contextMenu {
                                         if entry.terminal { Button("Inspect prompt…") { model.inspect?(entry) } }
-                                        if entry.windowKey != nil {
+                                        if Features.experimentalAgents && entry.windowKey != nil {
                                             Button("Edit window group…") { model.editGroup(entry) }
                                         }
                                     }
@@ -282,7 +286,9 @@ struct PaletteView: View {
             Divider()
             HStack(spacing: 16) {
                 Button { model.scope = .all; model.query = "@projects" } label: { Label("Projects", systemImage: "folder") }
+                if Features.experimentalAgents {
                     Button { model.beginAIGrouping() } label: { Label("AI groups", systemImage: "sparkles") }.buttonStyle(.plain)
+                }
                 Text(model.message ?? (model.trusted ? "\(model.results.count) results" : "Permission needed"))
                     .lineLimit(1)
                 Spacer()
@@ -323,7 +329,7 @@ struct PaletteView: View {
                 }
             }.frame(width: 38, height: 38)
             VStack(alignment: .leading, spacing: 4) {
-                Text(WindowSearch.excerpt(query: SearchQuery(model.query).text, title: entry.title))
+                Text(WindowSearch.excerpt(query: SearchQuery(model.query).text, title: entry.displayTitle))
                     .font(.system(size: 14, weight: .medium)).lineLimit(1)
                     .help(entry.title)
                     .accessibilityLabel(entry.title)
@@ -422,7 +428,7 @@ struct PaletteView: View {
                     helpRow("⌘I", "Inspect the selected terminal’s prompt")
                     helpRow("⌥⌘1–9", "Open that numbered result")
                     helpRow("↑↓ / ↵ / esc", "Select / open / return to previous app")
-                    helpRow("⌘G", "Group the selected window")
+                    if Features.experimentalAgents { helpRow("⌘G", "Group the selected window") }
                     helpRow("⌘R / ⌘/", "Refresh / show this help")
                 }.font(.system(size: 12))
                 Divider()

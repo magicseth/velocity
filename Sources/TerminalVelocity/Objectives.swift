@@ -84,6 +84,7 @@ final class ObjectiveLedger {
         }
     }
     func observeObjectives() {
+        guard Features.experimentalAgents else { return }
         let before = objectiveItems
         let selectedID = before.indices.contains(objectiveSelection) ? before[objectiveSelection].id : nil
         for item in allObjectiveItems {

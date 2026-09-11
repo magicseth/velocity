@@ -96,6 +96,7 @@ enum AIGrouping {
         return configuration.endpoint
     }
     static func suggest(candidates: [GroupingCandidate], endpoint: String, token: String) async throws -> [SuggestedObjective] {
+        guard Features.experimentalAgents else { throw Failure("Experimental agent features are disabled in this build.") }
         let url = try endpointURL(endpoint)
         guard (2...120).contains(candidates.count), Set(candidates.map(\.id)).count == candidates.count else { throw Failure("Select between 2 and 120 distinct windows.") }
         guard token.count >= 32 else { throw Failure("A device token of at least 32 characters is required.") }
@@ -126,6 +127,7 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Se
 
 @MainActor extension PaletteModel {
     func beginAIGrouping() {
+        guard Features.experimentalAgents else { return }
         guard !aiLoading else { showAIGrouping = true; return }
         aiSnapshot = [:]
         aiCandidates = []
@@ -159,6 +161,7 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Se
         showAIGrouping = true
     }
     func requestAIGrouping() {
+        guard Features.experimentalAgents else { return }
         guard !aiLoading else { return }
         aiLoading = true; aiError = nil; aiSuggestions = []
         let candidates = aiCandidates.filter { aiSelectedCandidates.contains($0.id) }
@@ -175,6 +178,7 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Se
         }
     }
     func applyAISuggestions() {
+        guard Features.experimentalAgents else { return }
         var added: [WindowGroup] = []
         var used = Set(groups.flatMap(\.members))
         do {

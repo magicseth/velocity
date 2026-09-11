@@ -25,6 +25,11 @@ final class GroupTests: XCTestCase {
         model.groupName = "New"
         model.groupMembers = ["c", "d"]
         model.saveGroup()
+        if !Features.experimentalAgents {
+            XCTAssertEqual(model.groups.count, 1)
+            XCTAssertEqual(model.groups.first?.members, ["a", "b", "c"])
+            return
+        }
         XCTAssertEqual(model.groups.count, 2)
         XCTAssertEqual(model.groups.first?.members, ["a", "b"])
         model.editingGroupID = model.groups.last?.id

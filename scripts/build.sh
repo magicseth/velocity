@@ -10,8 +10,11 @@ if [[ -z "$IDENTITY" ]]; then
     echo "For an explicitly ad-hoc build, use CODE_SIGN_IDENTITY=- (Accessibility may reset after rebuilds)." >&2
     exit 1
 fi
-swift build -c release
-APP="$PWD/dist/Terminal Velocity.app"
+case "${VELOCITY_EXPERIMENTAL:-0}" in
+    0) swift build -c release; APP="$PWD/dist/Terminal Velocity.app" ;;
+    1) swift build -c release -Xswiftc -DVELOCITY_EXPERIMENTAL; APP="$PWD/dist/private/Terminal Velocity.app" ;;
+    *) echo "VELOCITY_EXPERIMENTAL must be 0 or 1" >&2; exit 1 ;;
+esac
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/TerminalVelocity "$APP/Contents/MacOS/TerminalVelocity"
 cp resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
