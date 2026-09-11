@@ -4,7 +4,7 @@ import { components } from "./_generated/api";
 import { tool } from "ai";
 import { Agent } from "@convex-dev/agent";
 import { convexGateway } from "@convex-dev/ai-sdk-provider";
-import { instructions, requestSchema, suggestionSchema, validateSuggestions } from "../lib/grouping";
+import { instructions, requestSchema, suggestionSchema, prepareSuggestions } from "../lib/grouping";
 
 const router = httpRouter();
 const organizer = new Agent(components.agent, {
@@ -36,7 +36,7 @@ router.route({ path: "/suggest-objectives", method: "POST", handler: httpAction(
       maxOutputTokens: 5000,
       abortSignal: AbortSignal.timeout(60000),
     }, { storageOptions: { saveMessages: "none" } });
-    return json(validateSuggestions(result.toolCalls.find(call => call.toolName === "suggest_objectives")?.input, candidates.map(c => c.id)));
+    return json(prepareSuggestions(result.toolCalls.find(call => call.toolName === "suggest_objectives")?.input, candidates.map(c => c.id)));
   } catch (error) {
     console.error("Objective grouping failed:", error instanceof Error ? error.message : "Unknown error");
     return json({ error: "AI grouping failed. Check gateway availability in your Convex deployment and try again." }, 502);

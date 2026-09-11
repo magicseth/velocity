@@ -147,17 +147,9 @@ final class SearchPanel: NSPanel {
             if flags == .command && event.charactersIgnoringModifiers == "/" { self.model.showHelp.toggle(); return nil }
             if event.keyCode == 53 && self.model.showHelp { self.model.showHelp = false; return nil }
             if self.model.showHelp { return event }
-            if flags == .command, let key = event.charactersIgnoringModifiers,
-               let number = Int(key), (1...5).contains(number) {
-                self.model.scope = SearchScope.allCases[number - 1]
-                return nil
-            }
             if event.keyCode == 53 { self.dismiss(restore: true); return nil }
             if event.keyCode == 125 { self.model.move(1); return nil }
             if event.keyCode == 126 { self.model.move(-1); return nil }
-            if flags == .command && event.charactersIgnoringModifiers == "t" { self.model.terminalsOnly.toggle(); return nil }
-            if flags == .command && event.charactersIgnoringModifiers == "b" { self.model.scope = self.model.scope == .browsers ? .all : .browsers; return nil }
-            if flags == [.command, .shift] && event.charactersIgnoringModifiers?.lowercased() == "a" { self.model.scope = self.model.scope == .audio ? .all : .audio; return nil }
             if flags == .command && event.charactersIgnoringModifiers == "r" { self.refresh(); return nil }
             return event
         }
@@ -293,7 +285,7 @@ final class SearchPanel: NSPanel {
         guard sender.tag != UserDefaults.standard.integer(forKey: "shortcut") else { return }
         registerShortcut(sender.tag)
     }
-    @objc func showAttention() { show(); model.scope = .attention; model.filter() }
+    @objc func showAttention() { show() }
     @objc func toggleNotifications() { attentionNotifications.toggle() }
     @objc func testNotification() { attentionNotifications.test() }
     @objc func notificationSettings() { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")!) }

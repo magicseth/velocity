@@ -34,9 +34,7 @@ On first launch, enable **Terminal Velocity** in **System Settings → Privacy &
 - The window list refreshes every 12 seconds while open.
 - Standard **Command–A / C / V / X / Z** editing shortcuts work in the search field.
 - **↑ / ↓** select a result; **Return** focuses it; **Escape** returns to your previous app.
-- **Command–T** toggles terminals only; **Command–R** refreshes the list.
-- **Command–B** toggles browser results; **Command–Shift–A** toggles the Audio filter.
-- **Command–1 / 2 / 3 / 4** selects All apps / Terminals / Browsers / Audio, preserving the search text.
+- **Command–R** refreshes the list.
 - Right-click the menu-bar icon to change the shortcut or quit.
 
 The list includes windows exposed by each app’s Accessibility implementation, including minimized and hidden windows, plus named tab controls exposed in window chrome. Tab results bring the containing window forward, then select the requested tab. Apps with no exposed windows appear as application results. Apps that do not expose accessible tab controls cannot have their inactive tabs indexed this way. Full-screen windows and other Spaces are subject to macOS and the target app’s window-switching behavior.
@@ -44,7 +42,7 @@ The list includes windows exposed by each app’s Accessibility implementation, 
 
 ## Agent attention and prompts
 
-**Command–5** opens Attention: only terminal results whose titles explicitly indicate **Needs input**. `@attention` and `@waiting` select explicit input requests; `@ready` separately selects idle hints. `@agents` includes recognized working titles too.
+Agent requests appear at the top of the unified list when the search is empty. `@attention` and `@waiting` select explicit input requests; `@ready` separately selects idle hints. `@agents` includes recognized working titles too.
 
 Codex’s `[ ! ] Action Required` and `[ . ] Action Required` title prefixes indicate user input. Claude’s `✳` prefix is an idle hint, not proof of a permission request; `◐` / `◑` indicate work in supported versions. Claude detection also requires its name in the terminal title. Custom titles, terminal multiplexers, disabled title updates, and version differences can hide these signals. Known terminal titles refresh alongside audio every two seconds, including while the palette is closed.
 
@@ -60,7 +58,7 @@ Speaker badges update every two seconds while the app is running:
 - **Playing audio / Muted**: the browser's accessible tab audio annotation or mute control. These are available only for tabs whose controls the browser exposes. English audio labels are currently recognized; ambiguous duplicate-title mappings are left unmarked unless their window and tab order can be matched.
 - **App audio**: macOS reports an active audio output stream for this process or an identifiable helper inside its app bundle (macOS 14.2+). It does not identify the individual window or guarantee non-silent output. The badge is shared by that app's window results; it is not copied onto every browser tab.
 
-The **Audio** filter includes playing, muted, and app-output results. No microphone access, screen recording, or audio capture is used. Titles, URLs, paths, and audio state remain in memory locally. The last 80 used window/tab identifiers are stored locally as hashes with selection timestamps for recent ranking.
+The optional `@audio` search includes playing, muted, and app-output results. No microphone access, screen recording, or audio capture is used. Titles, URLs, paths, and audio state remain in memory locally. The last 80 used window/tab identifiers are stored locally as hashes with selection timestamps for recent ranking.
 
 To start at login, add the built app in System Settings → General → Login Items. The native app has no third-party Swift dependencies and uses no screen recording. Keyboard handling is limited to its palette and registered system shortcuts. The optional Convex backend has its own Node dependencies.
 
@@ -76,16 +74,16 @@ The diagnostic command needs its own Accessibility authorization when launched f
 
 ## Agent notifications
 
-When a terminal title reports **Action Required**, TV sends a native macOS notification with sound and keeps an attention count in the menu bar. Clicking the banner opens Attention; the menu-bar icon opens All apps with attention first. Window/tab duplicates and blinking title markers produce one alert; brief title-read gaps do not retrigger it. Idle titles alone do not notify because they do not prove an agent has a question.
+When a terminal title reports **Action Required**, TV sends a native macOS notification with sound and keeps an attention count in the menu bar. Clicking the banner or menu-bar icon opens the unified list with attention first. Window/tab duplicates and blinking title markers produce one alert; brief title-read gaps do not retrigger it. Idle titles alone do not notify because they do not prove an agent has a question.
 
 Allow notifications when macOS asks. Right-click TV’s menu-bar icon for **Agent Notifications**, **Test Notification**, and **Notification Settings**. macOS notification settings and Focus control banner and sound delivery. Detection runs while TV is running and has Accessibility access; no terminal contents are sent to a server for notifications.
 
-Opening Velocity from its shortcut or menu-bar icon resets to **All apps**. Agents needing input come first when the search is empty, followed by audio items, then the usual recent results. An explicit notification click still opens Attention. Matching window/tab attention entries are merged in All apps too.
+Opening Velocity from its shortcut or menu-bar icon shows all apps in one list. Agents needing input come first when the search is empty, followed by audio items, then the usual recent results. Notification clicks open the same list. Matching window/tab attention entries are merged in the unified list.
 
 
 ## Chat app projects
 
-Click **Projects** or search `@projects` to find Claude projects. TV indexes project names and links exposed by Claude’s sidebar and All projects screen, including its Chat/Cowork and Code modes, and retains discovered metadata locally across mode changes and app restarts. Open **All projects** in Claude to expose projects missing from the sidebar. This is an index of discovered projects, not a full account API; deleted projects can remain cached until the index is refreshed in a future version. Project selection navigates within Claude without sending a message.
+Search `@projects` to find Claude projects. TV indexes project names and links exposed by Claude’s sidebar and All projects screen, including its Chat/Cowork and Code modes, and retains discovered metadata locally across mode changes and app restarts. Open **All projects** in Claude to expose projects missing from the sidebar. This is an index of discovered projects, not a full account API; deleted projects can remain cached until the index is refreshed in a future version. Project selection navigates within Claude without sending a message.
 
 Project indexing currently supports Claude. ChatGPT/Codex remains available through ordinary window search.
 

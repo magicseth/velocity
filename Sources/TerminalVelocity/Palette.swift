@@ -2,20 +2,6 @@ import AppKit
 import SwiftUI
 import ApplicationServices
 
-enum SearchScope: String, CaseIterable {
-    case all = "All apps", terminals = "Terminals", browsers = "Browsers", audio = "Audio", attention = "Attention"
-    var shortcutLabel: String { "⌘\(Self.allCases.firstIndex(of: self)! + 1)" }
-    var symbol: String {
-        switch self {
-        case .all: return "square.grid.2x2"
-        case .terminals: return "terminal"
-        case .browsers: return "globe"
-        case .audio: return "speaker.wave.2"
-        case .attention: return "exclamationmark.bubble"
-        }
-    }
-}
-
 @MainActor final class PaletteModel: ObservableObject {
     @Published var showAIGrouping = false
     @Published var aiCandidates: [GroupingCandidate] = []
@@ -46,11 +32,6 @@ enum SearchScope: String, CaseIterable {
         objectiveSelection = (objectiveSelection + delta + count) % count
     }
     @Published var query = "" { didSet { filter() } }
-    @Published var scope: SearchScope = .all { didSet { filter() } }
-    var terminalsOnly: Bool {
-        get { scope == .terminals }
-        set { scope = newValue ? .terminals : .all }
-    }
     @Published var results: [WindowEntry] = []
     @Published var selected = 0
     @Published var loading = false
@@ -135,7 +116,6 @@ enum SearchScope: String, CaseIterable {
     var shortcut = "⌃⌥K"
 
     func openAllApps() {
-        scope = .all
         query = ""
         selected = 0
     }
@@ -147,17 +127,13 @@ enum SearchScope: String, CaseIterable {
             let key = entry.memoryKey
             let recent = memory.recent[key] ?? 0
             guard parsed.accepts(entry, recent: recent > 0) else { return nil }
-            if scope == .terminals && !entry.terminal { return nil }
-            if scope == .browsers && !entry.browser { return nil }
-            if scope == .audio && entry.audio == .none { return nil }
-            if scope == .attention && !entry.attention.needsAttention { return nil }
             let searchText = entry.searchText
             guard let score = WindowSearch.score(query: parsed.text, title: searchText, app: entry.appName) else { return nil }
             // Like Command-Tab: the current item follows the previous destination.
             let rank = parsed.text.isEmpty && key == memory.currentKey ? 0.5 : recent
             return (score, rank == 0 && entry.launchURL != nil ? -1 : rank, index, entry)
         }.sorted {
-            if parsed.text.isEmpty && scope == .all {
+            if parsed.text.isEmpty {
                 let first = $0.3.attention.needsAttention ? 2 : ($0.3.audio != .none ? 1 : 0)
                 let second = $1.3.attention.needsAttention ? 2 : ($1.3.audio != .none ? 1 : 0)
                 if first != second { return first > second }
@@ -166,7 +142,7 @@ enum SearchScope: String, CaseIterable {
             if $0.1 != $1.1 { return $0.1 > $1.1 }
             return $0.2 < $1.2
         }.map { $0.3 }
-        if scope == .all || scope == .attention || parsed.commands.contains("@attention") || parsed.commands.contains("@waiting") {
+        do {
             let tabs = results.filter { $0.isTab && $0.attention.needsAttention }
             results.removeAll { entry in
                 guard !entry.isTab, let key = entry.windowKey else { return false }
@@ -215,12 +191,6 @@ struct PaletteView: View {
                     .foregroundStyle(.secondary).padding(5).background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
             }.padding(24)
 
-            HStack(spacing: 8) {
-                ForEach(SearchScope.allCases, id: \.self) { scopeButton($0) }
-                Spacer()
-                Button { model.showHelp.toggle() } label: { Image(systemName: "questionmark.circle") }
-                    .buttonStyle(.plain).help("Keyboard shortcuts and search commands (⌘/)").accessibilityLabel("Shortcut help")
-            }.padding(.horizontal, 24).padding(.bottom, 16)
             Divider()
 
             if model.trusted && (!model.browserTabsEnabled || model.browserNotice != nil) {
@@ -285,31 +255,20 @@ struct PaletteView: View {
             }
             Divider()
             HStack(spacing: 16) {
-                Button { model.scope = .all; model.query = "@projects" } label: { Label("Projects", systemImage: "folder") }
                 if Features.experimentalAgents {
                     Button { model.beginAIGrouping() } label: { Label("AI groups", systemImage: "sparkles") }.buttonStyle(.plain)
                 }
                 Text(model.message ?? (model.trusted ? "\(model.results.count) results" : "Permission needed"))
                     .lineLimit(1)
                 Spacer()
-                Text("↑↓ select    ↵ open    ⌘1–5 filters    ⌘/ help")
+                Text("↑↓ select    ↵ open    ⌘/ help")
+                Button { model.showHelp.toggle() } label: { Image(systemName: "questionmark.circle") }
+                    .buttonStyle(.plain).help("Keyboard shortcuts (⌘/)").accessibilityLabel("Shortcut help")
             }.font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary).padding(.horizontal, 20).padding(.vertical, 12)
         }
         .frame(width: 680, height: 510)
         .background(.regularMaterial)
         .onAppear { searching = true }
-    }
-
-    private func scopeButton(_ scope: SearchScope) -> some View {
-        Button { model.scope = scope; searching = true } label: {
-            HStack(spacing: 5) {
-                Image(systemName: scope.symbol)
-                Text(scope.rawValue)
-                Text(scope.shortcutLabel).font(.system(size: 9)).opacity(0.6)
-            }.font(.system(size: 11, weight: .medium)).padding(.horizontal, 11).padding(.vertical, 6)
-                .background(model.scope == scope ? Color.accentColor.opacity(0.14) : .clear, in: Capsule())
-                .foregroundStyle(model.scope == scope ? Color.accentColor : .secondary)
-        }.buttonStyle(.plain)
     }
 
     private func row(_ entry: WindowEntry, index: Int) -> some View {
@@ -424,7 +383,6 @@ struct PaletteView: View {
                     Button("Done") { model.showHelp = false; searching = true }.controlSize(.small)
                 }
                 Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 10) {
-                    helpRow("⌘1–5", "All apps · Terminals · Browsers · Audio · Attention")
                     helpRow("⌘I", "Inspect the selected terminal’s prompt")
                     helpRow("⌥⌘1–9", "Open that numbered result")
                     helpRow("↑↓ / ↵ / esc", "Select / open / return to previous app")

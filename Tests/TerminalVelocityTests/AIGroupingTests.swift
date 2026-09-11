@@ -2,6 +2,13 @@ import XCTest
 @testable import TerminalVelocity
 
 final class AIGroupingTests: XCTestCase {
+    func testEndpointErrorsIncludeStatusAndUsefulGuidance() {
+        XCTAssertTrue(AIGrouping.responseError(status: 404, data: Data("Not found".utf8)).contains(".convex.site"))
+        XCTAssertTrue(AIGrouping.responseError(status: 502, data: Data("Bad gateway".utf8)).contains("HTTP 502"))
+        XCTAssertTrue(AIGrouping.responseError(status: 401, data: Data()).contains("device token"))
+        XCTAssertTrue(AIGrouping.responseError(status: 502, data: Data(#"{"error":"Try fewer windows"}"#.utf8)).contains("Try fewer windows"))
+    }
+
     func testMetadataRemovesCommandsAndURLSecrets() {
         XCTAssertEqual(AIGrouping.metadata("Project ◂ node --private", limit: 400), "Project")
         XCTAssertEqual(AIGrouping.metadata("https://example.com/project?token=private#fragment", limit: 400), "https://example.com/project")

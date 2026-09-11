@@ -95,6 +95,22 @@ enum AIGrouping {
         try FileManager.default.removeItem(atPath: path)
         return configuration.endpoint
     }
+    static func responseError(status: Int?, data: Data) -> String {
+        let detail: String
+        if data.count <= 120000, let message = (try? JSONDecoder().decode([String: String].self, from: data))?["error"], !message.isEmpty {
+            detail = String(message.prefix(300))
+        } else {
+            switch status {
+            case 401, 403: detail = "Check the device token in Connection settings."
+            case 404: detail = "Check the endpoint: use the deployment’s .convex.site URL followed by /suggest-objectives."
+            case 413: detail = "Select fewer windows and try again."
+            case 429: detail = "The gateway is busy. Wait a moment and try again."
+            case 500, 502, 503, 504: detail = "The grouping service failed. Try fewer windows; check the Convex logs if it continues."
+            default: detail = "Check the grouping endpoint in Connection settings and try again."
+            }
+        }
+        return "Grouping failed" + (status.map { " (HTTP \($0))" } ?? "") + ": " + detail
+    }
     static func suggest(candidates: [GroupingCandidate], endpoint: String, token: String) async throws -> [SuggestedObjective] {
         guard Features.experimentalAgents else { throw Failure("Experimental agent features are disabled in this build.") }
         let url = try endpointURL(endpoint)
@@ -111,8 +127,7 @@ enum AIGrouping {
         defer { session.finishTasksAndInvalidate() }
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            let message = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
-            throw Failure(message ?? "The grouping endpoint did not return a successful response.")
+            throw Failure(responseError(status: (response as? HTTPURLResponse)?.statusCode, data: data))
         }
         guard data.count <= 120000 else { throw Failure("The gateway response was too large.") }
         let groups = try JSONDecoder().decode(GroupingResponse.self, from: data).groups

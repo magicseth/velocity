@@ -26,7 +26,7 @@ final class AttentionTests: XCTestCase {
         XCTAssertFalse(SearchQuery("@waiting").accepts(idle, recent: false))
     }
 
-    @MainActor func testAttentionScopeExcludesIdleAndWorking() {
+    @MainActor func testExplicitAttentionQueryExcludesIdleAndWorking() {
         func entry(_ id: String, _ title: String) -> WindowEntry {
             WindowEntry(id: id, pid: 1, appName: "Terminal", title: title, icon: nil,
                         element: nil, minimized: false, hidden: false, terminal: true)
@@ -34,7 +34,7 @@ final class AttentionTests: XCTestCase {
         let waiting = entry("waiting", "[ ! ] Action Required | checkout — codex")
         let model = PaletteModel()
         model.all = [entry("idle", "✳ Task — claude"), entry("busy", "◐ Task — claude"), waiting]
-        model.scope = .attention
+        model.query = "@attention"
         XCTAssertEqual(model.results.map(\.id), ["waiting"])
         XCTAssertTrue(SearchQuery("@attention").accepts(waiting, recent: false))
     }
@@ -52,9 +52,8 @@ final class AttentionTests: XCTestCase {
             entry("other-tab", "[ ! ] Action Required | Task two", tab: true),
             entry("other-window", "convexos — [ ! ] Action Required | Task one", tab: false, element: AXUIElementCreateApplication(903))
         ]
-        model.scope = .attention
+        model.query = "@attention"
         XCTAssertEqual(Set(model.results.map(\.id)), ["tab", "other-tab", "other-window"])
-        model.scope = .all
         model.query = "@waiting"
         XCTAssertEqual(Set(model.results.map(\.id)), ["tab", "other-tab", "other-window"])
         model.query = "@windows @attention"
