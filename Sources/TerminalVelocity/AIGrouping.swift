@@ -19,6 +19,13 @@ struct SuggestedObjective: Codable, Identifiable {
 struct GroupingResponse: Codable { let groups: [SuggestedObjective] }
 
 enum AIGrouping {
+    static let windowLimit = 20
+
+    static func smallerSelection(_ candidates: [GroupingCandidate], selected: Set<String>) -> Set<String> {
+        let current = candidates.filter { selected.contains($0.id) }
+        return Set(current.prefix(max(2, current.count / 2)).map(\.id))
+    }
+
     static func metadata(_ value: String, limit: Int) -> String {
         let title = value.components(separatedBy: " ◂ ")[0]
             .replacingOccurrences(of: NSHomeDirectory(), with: "~")
@@ -114,7 +121,7 @@ enum AIGrouping {
     static func suggest(candidates: [GroupingCandidate], endpoint: String, token: String) async throws -> [SuggestedObjective] {
         guard Features.experimentalAgents else { throw Failure("Experimental agent features are disabled in this build.") }
         let url = try endpointURL(endpoint)
-        guard (2...120).contains(candidates.count), Set(candidates.map(\.id)).count == candidates.count else { throw Failure("Select between 2 and 120 distinct windows.") }
+        guard (2...windowLimit).contains(candidates.count), Set(candidates.map(\.id)).count == candidates.count else { throw Failure("Select between 2 and \(windowLimit) distinct windows.") }
         guard token.count >= 32 else { throw Failure("A device token of at least 32 characters is required.") }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -162,10 +169,10 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Se
         }
         for entry in ordered {
             guard let key = entry.windowKey, !assigned.contains(key), seen.insert(key).inserted else { continue }
-            guard aiCandidates.count < 120 else { break }
+            guard aiCandidates.count < AIGrouping.windowLimit else { break }
             let id = "w\(aiCandidates.count + 1)"
             let tabs = all.filter { $0.isTab && ($0.windowKey == key || ($0.pid == entry.pid && $0.browserTab?.windowTitle == entry.title)) }
-                .prefix(12).map { AIGrouping.metadata($0.title, limit: 200) + ($0.browserTab.flatMap { URL(string: $0.url)?.host }.map { " (" + $0 + ")" } ?? "") }
+                .prefix(6).map { AIGrouping.metadata($0.title, limit: 200) + ($0.browserTab.flatMap { URL(string: $0.url)?.host }.map { " (" + $0 + ")" } ?? "") }
             let candidate = GroupingCandidate(id: id, app: AIGrouping.metadata(entry.appName, limit: 100),
                 title: AIGrouping.metadata(entry.title, limit: 400),
                 folder: String(entry.documentFolder.split(separator: "/").suffix(3).joined(separator: "/").prefix(200)), tabs: tabs.map { String($0.prefix(250)) })

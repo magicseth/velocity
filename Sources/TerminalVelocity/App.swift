@@ -68,6 +68,7 @@ final class SearchPanel: NSPanel {
         model.restoreObjectiveFocus = { [weak self] in self?.objectiveFocus.restore() }
         model.choose = { [weak self] in self?.choose() }
         model.chooseEntry = { [weak self] entry in self?.choose(entry) }
+        model.closeEntry = { [weak self] entry in self?.close(entry) }
         model.inspect = { [weak self] entry in self?.inspect(entry) }
         model.refresh = { [weak self] in self?.refresh() }
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -449,6 +450,19 @@ final class SearchPanel: NSPanel {
                 guard let self, self.model.previewEntry?.id == entry.id else { return }
                 self.model.previewText = text
             }
+        }
+    }
+
+    func close(_ entry: WindowEntry) {
+        guard entry.canClose, model.closingEntries.insert(entry.id).inserted else { return }
+        Task { @MainActor in
+            defer { model.closingEntries.remove(entry.id) }
+            let accepted = await CloseResult.close(entry)
+            if !accepted { model.message = "Couldn’t close that result. Open it in its app to close it." }
+            // Do not optimistically remove a result: its app may be asking to save
+            // a document or confirm ending running terminal processes.
+            try? await Task.sleep(for: .milliseconds(250))
+            refresh()
         }
     }
 

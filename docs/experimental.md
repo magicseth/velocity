@@ -35,7 +35,7 @@ Choosing a member in Velocity, selecting it in macOS, or dragging the focused me
 
 ## AI objective suggestions
 
-Open **AI groups** in search, or **Suggest groups** in the objective switcher. Review the selected window metadata, request suggestions through Convex AI Gateway, rename or select the proposals you want, then create the objectives. Existing groups are preserved. Suggestions group whole windows; tab titles provide context. Up to 120 ungrouped windows are considered per pass, interleaved across apps.
+Open **AI groups** in search, or **Suggest groups** in the objective switcher. Review the selected window metadata, request suggestions through Convex AI Gateway, rename or select the proposals you want, then create the objectives. Existing groups are preserved. Suggestions group whole windows; tab titles provide context. Up to 20 ungrouped windows are considered per pass, interleaved across apps, with at most six tab titles per window. If a request fails, **Retry with fewer windows** halves the current selection (down to two).
 
 AI suggestions require your own Convex deployment and device token; downloads do not include a shared hosted service. Device authentication is stored in Keychain. Terminal buffers, document contents, and page bodies are not sent. See [backend setup](../backend/README.md) for deployment details.
 

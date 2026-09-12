@@ -10,7 +10,7 @@ struct AIGroupingView: View {
                 Spacer()
                 Button("Back") { model.showAIGrouping = false }.disabled(model.aiLoading)
             }
-            Text("Convex AI Gateway groups selected windows by shared work. Review the metadata below before sending. Whole windows are grouped; tab titles provide context. Up to 120 ungrouped windows are included per pass.")
+            Text("Convex AI Gateway groups selected windows by shared work. Review the metadata below before sending. Whole windows are grouped; tab titles provide context. Up to \(AIGrouping.windowLimit) ungrouped windows are included per pass.")
                 .font(.system(size: 11)).foregroundStyle(.secondary)
             if model.aiSuggestions.isEmpty {
                 DisclosureGroup("Connection settings", isExpanded: $showConnection) {
@@ -70,7 +70,15 @@ struct AIGroupingView: View {
                         .buttonStyle(.borderedProminent)
                 }
             }
-            if let error = model.aiError { Text(error).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
+            if let error = model.aiError {
+                Text(error).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                if model.aiSuggestions.isEmpty && model.aiSelectedCandidates.count > 2 {
+                    Button("Retry with \(max(2, model.aiSelectedCandidates.count / 2)) windows") {
+                        model.aiSelectedCandidates = AIGrouping.smallerSelection(model.aiCandidates, selected: model.aiSelectedCandidates)
+                        model.requestAIGrouping()
+                    }.disabled(model.aiLoading)
+                }
+            }
         }.padding(20).frame(width: 680, height: 510).background(.regularMaterial)
             .onAppear { showConnection = model.aiEndpoint.isEmpty }
     }

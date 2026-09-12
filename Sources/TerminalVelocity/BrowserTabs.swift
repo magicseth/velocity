@@ -120,6 +120,24 @@ enum BrowserTabs {
         return "with timeout of 3 seconds\n\(source)\nend timeout"
     }
 
+    static func close(_ tab: BrowserTab) -> Bool {
+        guard supported.contains(tab.browserID) else { return false }
+        var error: NSDictionary?
+        let result = NSAppleScript(source: closingSource(tab))?.executeAndReturnError(&error)
+        return error == nil && result?.booleanValue == true
+    }
+
+    static func closingSource(_ tab: BrowserTab) -> String {
+        // Reuse stable Chrome IDs and Safari's validated index/unique-match logic.
+        selectionSource(tab).components(separatedBy: "\n").compactMap { line -> String? in
+            let command = line.trimmingCharacters(in: .whitespaces)
+            if ["set minimized of w to false", "set miniaturized of w to false", "set index of w to 1"].contains(command) { return nil }
+            if command == "set active tab index of w to n" { return "close tab n of w" }
+            if command == "set current tab of w to tab chosen of w" { return "close tab chosen of w" }
+            return line
+        }.joined(separator: "\n")
+    }
+
     static func quote(_ string: String) -> String {
         "\"" + string.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
     }

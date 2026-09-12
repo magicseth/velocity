@@ -15,7 +15,7 @@ Velocity discovers open Chrome and Safari tabs, accessible terminal tabs and app
 
 Native macOS menu-bar app. macOS 14+. The public build runs locally and makes no AI requests.
 
-[**Download Velocity**](https://github.com/magicseth/velocity/releases/tag/v0.1.7)
+[**Download Velocity**](https://github.com/magicseth/velocity/releases/tag/v0.1.8)
 
 ![Velocity window search, with agent attention first and playing audio next](docs/screenshots/window-switcher.png)
 
@@ -55,6 +55,7 @@ On first launch, enable **Terminal Velocity** in **System Settings → Privacy &
 - The window list refreshes every 12 seconds while open.
 - Standard **Command–A / C / V / X / Z** editing shortcuts work in the search field.
 - **↑ / ↓** select a result; **Return** focuses it; **Escape** returns to your previous app.
+- Click **×** beside a result to close that tab or window, or quit an app-only result. Native save/process prompts remain in the owning app. Launchable apps and saved chat projects have no close button.
 - **Command–R** refreshes the list.
 - Right-click the menu-bar icon to change the shortcut or quit.
 

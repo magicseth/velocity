@@ -119,6 +119,8 @@ struct SearchResults {
     var all: [WindowEntry] = []
     var choose: (() -> Void)?
     var chooseEntry: ((WindowEntry) -> Void)?
+    var closeEntry: ((WindowEntry) -> Void)?
+    @Published var closingEntries: Set<String> = []
     var refresh: (() -> Void)?
     var shortcut = "⌥⇧A"
 
@@ -248,10 +250,20 @@ struct PaletteView: View {
                     // estimated lazy-stack geometry as hundreds of results refresh.
                     List {
                             ForEach(Array(displayed.entries.enumerated()), id: \.element.id) { index, entry in
-                                Button { model.chooseEntry?(entry) } label: { row(entry, index: index) }
-                                    .buttonStyle(.plain)
-                                    .focusable(false)
-                                    .frame(height: 58)
+                                HStack(spacing: 0) {
+                                    Button { model.chooseEntry?(entry) } label: { row(entry, index: index) }
+                                        .buttonStyle(.plain).focusable(false)
+                                    if entry.canClose {
+                                        Button { model.closeEntry?(entry) } label: {
+                                            Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
+                                                .foregroundStyle(.secondary).frame(width: 28, height: 32)
+                                                .contentShape(Rectangle())
+                                        }.buttonStyle(.plain).focusable(false)
+                                            .help(entry.closeLabel).accessibilityLabel(entry.closeLabel + ": " + entry.title)
+                                            .disabled(model.closingEntries.contains(entry.id))
+                                            .padding(.trailing, 8)
+                                    }
+                                }.frame(height: 58)
                                     .background(entry.id == displayed.selectedID ? Color.accentColor.opacity(0.14) : .clear, in: RoundedRectangle(cornerRadius: 9))
                                     .contextMenu {
                                         if entry.terminal { Button("Inspect prompt…") { model.inspect?(entry) } }
