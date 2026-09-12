@@ -369,12 +369,17 @@ final class SearchPanel: NSPanel {
         }
         return result.selectedFocused
     }
-    @objc func toggle() { panel.isVisible ? dismiss(restore: true) : show() }
+    @objc func toggle() {
+        if PalettePresentation.shouldDismiss(visible: panel.isVisible, key: panel.isKeyWindow, active: NSApp.isActive) {
+            dismiss(restore: true)
+        } else { show() }
+    }
 
     func show() {
         model.showAIGrouping = false
         model.objectiveMode = false
-        previousApp = NSWorkspace.shared.frontmostApplication
+        if let frontmost = NSWorkspace.shared.frontmostApplication,
+           frontmost.processIdentifier != ProcessInfo.processInfo.processIdentifier { previousApp = frontmost }
         model.previewEntry = nil
         model.showHelp = false
         model.editingGroup = false
@@ -489,7 +494,14 @@ final class SearchPanel: NSPanel {
         }
         panel.orderOut(nil)
     }
-    func windowDidResignKey(_ notification: Notification) { panel.orderOut(nil) }
+    func windowDidResignKey(_ notification: Notification) {
+        // A queued resign notification from the previous handoff must not hide a
+        // palette that has already regained focus through the global shortcut.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.panel.isKeyWindow else { return }
+            self.panel.orderOut(nil)
+        }
+    }
 }
 
 @main struct TerminalVelocity {

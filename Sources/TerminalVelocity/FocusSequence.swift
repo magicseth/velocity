@@ -17,3 +17,10 @@ import Foundation
         return Result(selectedFocused: selectedFocused, companionsFocused: companionsFocused)
     }
 }
+
+/// Visibility alone can mean the panel exists behind another app or on another Space.
+enum PalettePresentation {
+    static func shouldDismiss(visible: Bool, key: Bool, active: Bool) -> Bool {
+        visible && key && active
+    }
+}

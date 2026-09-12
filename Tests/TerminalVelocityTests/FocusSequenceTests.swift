@@ -2,6 +2,13 @@ import XCTest
 @testable import TerminalVelocity
 
 final class FocusSequenceTests: XCTestCase {
+    func testShortcutShowsBackgroundPaletteInsteadOfHidingIt() {
+        XCTAssertFalse(PalettePresentation.shouldDismiss(visible: true, key: false, active: false))
+        XCTAssertFalse(PalettePresentation.shouldDismiss(visible: true, key: false, active: true))
+        XCTAssertFalse(PalettePresentation.shouldDismiss(visible: false, key: false, active: false))
+        XCTAssertTrue(PalettePresentation.shouldDismiss(visible: true, key: true, active: true))
+    }
+
     private func entry(_ id: String) -> WindowEntry {
         WindowEntry(id: id, pid: 1, appName: id, title: id, icon: nil, element: nil,
                     minimized: false, hidden: false, terminal: id == "Terminal")
