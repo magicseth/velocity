@@ -418,7 +418,8 @@ enum WindowCatalog {
 
     @MainActor static func selectFocusedTab(_ entry: WindowEntry) async -> Bool {
         // Browser scripting has already selected its stable tab ID.
-        guard entry.tab != nil, entry.browserTab == nil else { return true }
+        if let browserTab = entry.browserTab { return BrowserTabs.select(browserTab) }
+        guard entry.tab != nil else { return true }
         guard let tab = liveTab(for: entry) else { return false }
         if tabIsSelected(tab) == true { return true }
         let pressed = AXUIElementPerformAction(tab, kAXPressAction as CFString)
@@ -435,7 +436,19 @@ enum WindowCatalog {
     @MainActor static func focus(_ entry: WindowEntry) -> Bool {
         guard let app = NSRunningApplication(processIdentifier: entry.pid), !app.isTerminated else { return false }
         if let browserTab = entry.browserTab {
-            guard BrowserTabs.select(browserTab) else { return false }
+            // Scripting owns the exact browser destination. AX windows from the
+            // scan may have been recreated or associated with another tab; never
+            // raise those cached windows after selecting a stable browser ID.
+            app.unhide()
+            if NSWorkspace.shared.frontmostApplication?.processIdentifier != entry.pid {
+                if NSApp.isActive {
+                    NSApp.yieldActivation(to: app)
+                    guard app.activate(from: .current, options: []) else { return false }
+                } else {
+                    guard app.activate(options: []) else { return false }
+                }
+            }
+            return BrowserTabs.select(browserTab)
         }
         app.unhide()
         if let window = entry.element {

@@ -78,15 +78,25 @@ enum BrowserTabs {
         if tab.browserID == "com.google.Chrome" {
             source = """
             tell application id "com.google.Chrome"
-                repeat with w in windows
-                    repeat with n from 1 to count of tabs of w
-                        if (id of tab n of w as integer) is \(tab.tabID) then
-                            set minimized of w to false
-                            set active tab index of w to n
-                            set index of w to 1
-                            return true
-                        end if
-                    end repeat
+                set candidates to {}
+                try
+                    set end of candidates to window id \(tab.windowID)
+                end try
+                repeat with otherWindow in windows
+                    if (id of otherWindow as integer) is not \(tab.windowID) then set end of candidates to contents of otherWindow
+                end repeat
+                repeat with w in candidates
+                    try
+                        set tabIDs to id of every tab of w
+                        repeat with n from 1 to count of tabIDs
+                            if (item n of tabIDs as integer) is \(tab.tabID) then
+                                set minimized of w to false
+                                set active tab index of w to n
+                                set index of w to 1
+                                return (id of active tab of w as integer) is \(tab.tabID)
+                            end if
+                        end repeat
+                    end try
                 end repeat
                 return false
             end tell
@@ -120,7 +130,7 @@ enum BrowserTabs {
             end tell
             """
         }
-        return "with timeout of 3 seconds\n\(source)\nend timeout"
+        return "with timeout of 8 seconds\n\(source)\nend timeout"
     }
 
     static func close(_ tab: BrowserTab) -> Bool {
@@ -131,8 +141,26 @@ enum BrowserTabs {
     }
 
     static func closingSource(_ tab: BrowserTab) -> String {
-        // Reuse stable Chrome IDs and Safari's validated index/unique-match logic.
-        selectionSource(tab).components(separatedBy: "\n").compactMap { line -> String? in
+        if tab.browserID == "com.google.Chrome" {
+            return """
+            with timeout of 5 seconds
+                tell application id "com.google.Chrome"
+                    repeat with w in windows
+                        repeat with n from 1 to count of tabs of w
+                            if (id of tab n of w as integer) is \(tab.tabID) then
+                                if URL of tab n of w is not \(quote(tab.url)) then return false
+                                close tab n of w
+                                return true
+                            end if
+                        end repeat
+                    end repeat
+                    return false
+                end tell
+            end timeout
+            """
+        }
+        // Safari retains its validated index/unique-match logic.
+        return selectionSource(tab).components(separatedBy: "\n").compactMap { line -> String? in
             let command = line.trimmingCharacters(in: .whitespaces)
             if ["set minimized of w to false", "set miniaturized of w to false", "set index of w to 1"].contains(command) { return nil }
             if command == "set active tab index of w to n" { return "close tab n of w" }
