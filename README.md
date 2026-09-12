@@ -112,9 +112,3 @@ Objectives, window grouping, AI grouping, and title-derived agent synopses are d
 ### Menu bar placement
 
 Velocity keeps its icon a fixed width, including when agents need attention. Hold **Command** and drag the icon nearer the clock to keep it away from the notch; macOS saves its placement. Left-click opens search; right-click opens settings. **Option–Shift–A** opens Velocity even when the menu bar is crowded.
-
-### Tidy browser tabs (development build)
-
-Open **Tidy tabs** in Velocity to set up the [Chrome companion](browser-companion/README.md). It proposes related tab groups, reviews exact duplicates and tabs that have not been active recently, and can automatically close unloaded exact duplicates. Existing groups, pinned tabs, active tabs, and media tabs are protected from cleanup. Organization stays within each window and profile. Undo restores the last organization when tabs have not since changed; closed URLs can be reopened, without restoring unsaved page state.
-
-This companion runs locally and needs a one-time Chrome extension installation. It is separate from experimental AI objectives; Safari tab organization is not supported yet.

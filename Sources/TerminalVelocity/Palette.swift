@@ -10,7 +10,6 @@ struct SearchResults {
 
 @MainActor final class PaletteModel: ObservableObject {
     @Published var showAIGrouping = false
-    @Published var showTabOrganizer = false
     @Published var aiCandidates: [GroupingCandidate] = []
     @Published var aiSelectedCandidates: Set<String> = []
     @Published var aiSuggestions: [SuggestedObjective] = []
@@ -191,7 +190,7 @@ struct PaletteView: View {
     @FocusState private var searching: Bool
 
     var body: some View {
-        if model.showTabOrganizer { TabOrganizerSetupView(model: model) } else if Features.experimentalAgents && model.showAIGrouping { AIGroupingView(model: model) } else if Features.experimentalAgents && model.objectiveMode { ObjectiveView(model: model) } else { windowPalette }
+        if Features.experimentalAgents && model.showAIGrouping { AIGroupingView(model: model) } else if Features.experimentalAgents && model.objectiveMode { ObjectiveView(model: model) } else { windowPalette }
     }
 
     private var windowPalette: some View {
@@ -298,7 +297,6 @@ struct PaletteView: View {
             }
             Divider()
             HStack(spacing: 16) {
-                Button { model.showTabOrganizer = true } label: { Label("Tidy tabs", systemImage: "rectangle.stack") }.buttonStyle(.plain)
                 if Features.experimentalAgents {
                     Button { model.beginAIGrouping() } label: { Label("AI groups", systemImage: "sparkles") }.buttonStyle(.plain)
                 }
