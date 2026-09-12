@@ -10,6 +10,7 @@ final class SearchPanel: NSPanel {
 
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let model = PaletteModel()
+    let updater = AppUpdater()
     var status: NSStatusItem!
     var panel: SearchPanel!
     var hotKey: EventHotKeyRef?
@@ -271,6 +272,7 @@ final class SearchPanel: NSPanel {
             add("Accessibility Settings…", #selector(accessibility), to: menu)
             add("Enable Chrome & Safari Tabs…", #selector(enableBrowserTabs), to: menu)
             menu.addItem(.separator())
+            add("Check for Updates…", #selector(checkForUpdates), to: menu)
             add("Quit Terminal Velocity", #selector(quit), to: menu)
             status.menu = menu
             status.button?.performClick(nil)
@@ -282,6 +284,7 @@ final class SearchPanel: NSPanel {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
         item.target = self; menu.addItem(item)
     }
+    @objc func checkForUpdates() { panel.orderOut(nil); updater.check() }
     @objc func changeShortcut(_ sender: NSMenuItem) {
         guard sender.tag != UserDefaults.standard.integer(forKey: "shortcut") else { return }
         registerShortcut(sender.tag)
@@ -445,8 +448,7 @@ final class SearchPanel: NSPanel {
     }
 
     func choose() {
-        guard model.results.indices.contains(model.selected) else { return }
-        let entry = model.results[model.selected]
+        guard let entry = model.resultState.selectedEntry else { return }
         choose(entry)
     }
 

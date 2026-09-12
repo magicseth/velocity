@@ -2,6 +2,12 @@ import AppKit
 import SwiftUI
 import ApplicationServices
 
+struct SearchResults {
+    var entries: [WindowEntry] = []
+    var selectedID: String?
+    var selectedEntry: WindowEntry? { entries.first { $0.id == selectedID } }
+}
+
 @MainActor final class PaletteModel: ObservableObject {
     @Published var showAIGrouping = false
     @Published var aiCandidates: [GroupingCandidate] = []
@@ -32,8 +38,9 @@ import ApplicationServices
         objectiveSelection = (objectiveSelection + delta + count) % count
     }
     @Published var query = "" { didSet { filter() } }
-    @Published var results: [WindowEntry] = []
-    @Published var selected = 0
+    @Published private(set) var resultState = SearchResults()
+    var results: [WindowEntry] { resultState.entries }
+    var selected: Int { results.firstIndex { $0.id == resultState.selectedID } ?? -1 }
     @Published var loading = false
     @Published var trusted = AXIsProcessTrusted()
     @Published var message: String?
@@ -117,13 +124,12 @@ import ApplicationServices
 
     func openAllApps() {
         query = ""
-        selected = 0
     }
 
     func filter(preserveSelection: Bool = false) {
-        let selectedID = preserveSelection && results.indices.contains(selected) ? results[selected].id : nil
+        let selectedID = preserveSelection ? resultState.selectedID : nil
         let parsed = SearchQuery(query)
-        results = all.enumerated().compactMap { index, entry -> (Int, Double, Int, WindowEntry)? in
+        var nextResults = all.enumerated().compactMap { index, entry -> (Int, Double, Int, WindowEntry)? in
             let key = entry.memoryKey
             let recent = memory.recent[key] ?? 0
             guard parsed.accepts(entry, recent: recent > 0) else { return nil }
@@ -143,19 +149,22 @@ import ApplicationServices
             return $0.2 < $1.2
         }.map { $0.3 }
         do {
-            let tabs = results.filter { $0.isTab && $0.attention.needsAttention }
-            results.removeAll { entry in
+            let tabs = nextResults.filter { $0.isTab && $0.attention.needsAttention }
+            nextResults.removeAll { entry in
                 guard !entry.isTab, let key = entry.windowKey else { return false }
                 return tabs.contains { $0.windowKey == key && $0.attentionTaskTitle == entry.attentionTaskTitle }
             }
         }
-        results = WindowCatalog.removingBrowserWindowDuplicates(results)
-        selected = selectedID.flatMap { id in results.firstIndex { $0.id == id } } ?? 0
+        nextResults = WindowCatalog.removingBrowserWindowDuplicates(nextResults)
+        // Publish rows and selection together. A vanished selection must not silently
+        // become a different app occupying the same row after a background scan.
+        resultState = SearchResults(entries: nextResults, selectedID: selectedID ?? nextResults.first?.id)
     }
 
     func move(_ delta: Int) {
         guard !results.isEmpty else { return }
-        selected = (selected + delta + results.count) % results.count
+        let index = selected < 0 ? (delta < 0 ? results.count - 1 : 0) : (selected + delta + results.count) % results.count
+        resultState = SearchResults(entries: results, selectedID: results[index].id)
     }
 
     func openAccessibility() {
@@ -179,13 +188,17 @@ struct PaletteView: View {
     }
 
     private var windowPalette: some View {
-        VStack(spacing: 0) {
+        let displayed = model.resultState
+        return VStack(spacing: 0) {
             HStack(spacing: 12) {
                 Image(systemName: "magnifyingglass").font(.system(size: 22, weight: .medium)).foregroundStyle(.secondary)
                 TextField("Find a window or app…", text: $model.query)
                     .textFieldStyle(.plain).font(.system(size: 23)).focused($searching)
                     .accessibilityLabel("Search windows and apps")
-                    .onSubmit { model.choose?() }
+                     .onSubmit {
+                        if let entry = displayed.selectedEntry { model.chooseEntry?(entry) }
+                        else { model.message = "That result is no longer available. Select a result or refresh." }
+                    }
                 Text("esc").help("Close search and return to your previous app")
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundStyle(.secondary).padding(5).background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
@@ -232,10 +245,11 @@ struct PaletteView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(spacing: 3) {
-                            ForEach(Array(model.results.enumerated()), id: \.element.id) { index, entry in
+                            ForEach(Array(displayed.entries.enumerated()), id: \.element.id) { index, entry in
                                 Button { model.chooseEntry?(entry) } label: { row(entry, index: index) }
                                     .buttonStyle(.plain)
-                                    .background(index == model.selected ? Color.accentColor.opacity(0.14) : .clear, in: RoundedRectangle(cornerRadius: 9))
+                                    .focusable(false)
+                                    .background(entry.id == displayed.selectedID ? Color.accentColor.opacity(0.14) : .clear, in: RoundedRectangle(cornerRadius: 9))
                                     .contextMenu {
                                         if entry.terminal { Button("Inspect prompt…") { model.inspect?(entry) } }
                                         if Features.experimentalAgents && entry.windowKey != nil {

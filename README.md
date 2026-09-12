@@ -15,7 +15,7 @@ Velocity discovers open Chrome and Safari tabs, accessible terminal tabs and app
 
 Native macOS menu-bar app. macOS 14+. The public build runs locally and makes no AI requests.
 
-[**Download Velocity**](https://github.com/magicseth/velocity/releases/tag/v0.1.4)
+[**Download Velocity**](https://github.com/magicseth/velocity/releases/tag/v0.1.5)
 
 ![Velocity window search, with agent attention first and playing audio next](docs/screenshots/window-switcher.png)
 
@@ -26,6 +26,12 @@ Native macOS menu-bar app. macOS 14+. The public build runs locally and makes no
 Download the macOS Apple silicon build from [Releases](https://github.com/magicseth/velocity/releases). Unzip it and move **Terminal Velocity.app** to Applications. The app retains its original name and bundle identifier in this preview.
 
 The release is Developer ID signed but **not notarized**. macOS may require approval in System Settings → Privacy & Security before first launch. Requires macOS 14 or later; the downloadable binary is arm64. Intel Macs can build from source.
+
+## Updates
+
+Right-click Velocity’s menu-bar icon and choose **Check for Updates…**. If a newer version is available, choose **Download & Restart**. Velocity checks GitHub, verifies the download checksum and Developer ID signature, installs in place, and restarts with your settings intact. Keep the app in a writable folder, such as your Applications folder.
+
+Public builds update to public builds; experimental builds update to the separate `-experimental.zip` asset. The standard download keeps objectives and synopses disabled. Versions before 0.1.5 need one manual download to gain the updater. Updates are checked only when you ask; no window titles or conversation data are sent to GitHub.
 
 ## Build and run
 

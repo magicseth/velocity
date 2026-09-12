@@ -7,6 +7,8 @@ VELOCITY_EXPERIMENTAL=1 bash scripts/build.sh
 open "dist/private/Terminal Velocity.app"
 ```
 
+Experimental releases also provide a separately labeled `-experimental.zip` asset. The in-app updater stays on this channel, preserving your experimental features.
+
 The private build shares the existing bundle identifier, Accessibility grant, saved objectives, and Keychain configuration. Quit the public app before opening it. The public build ignores saved objective state without erasing it. `bash scripts/build.sh` always returns to the public configuration and writes `dist/Terminal Velocity.app`; experimental output stays in `dist/private/`.
 
 The same `VELOCITY_EXPERIMENTAL` compile flag enables objectives, manual and AI grouping, and title-derived agent synopses. Synopses clean up agent titles; they are not live AI summaries. AI grouping requires your own configured Convex backend and explicit metadata submission.

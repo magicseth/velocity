@@ -19,6 +19,9 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/TerminalVelocity "$APP/Contents/MacOS/TerminalVelocity"
 cp resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp resources/Info.plist "$APP/Contents/Info.plist"
+if [[ "${VELOCITY_EXPERIMENTAL:-0}" == 1 ]]; then
+    /usr/libexec/PlistBuddy -c "Set :VelocityExperimental true" "$APP/Contents/Info.plist"
+fi
 codesign --force --options runtime --timestamp=none --entitlements resources/entitlements.plist --sign "$IDENTITY" "$APP"
 codesign --verify --strict "$APP"
 echo "Built: $APP"

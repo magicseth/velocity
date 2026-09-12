@@ -241,18 +241,18 @@ enum WindowCatalog {
             AXUIElementSetMessagingTimeout(application, 0.2)
             let windows = attribute(application, kAXWindowsAttribute) as? [AXUIElement] ?? []
             var appEntries: [WindowEntry] = []
-            for (index, window) in windows.enumerated() {
+            for window in windows {
                 AXUIElementSetMessagingTimeout(window, 0.15)
                 let title = (attribute(window, kAXTitleAttribute) as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 let minimized = attribute(window, kAXMinimizedAttribute) as? Bool ?? false
-                appEntries.append(WindowEntry(id: "\(pid):\(index)", pid: pid, appName: name,
+                appEntries.append(WindowEntry(id: "\(pid):window:\(CFHash(window))", pid: pid, appName: name,
                     title: title.isEmpty ? "Untitled window" : title, icon: app.icon,
                     element: window, minimized: minimized, hidden: app.isHidden, terminal: terminal,
                     audio: audioPIDs.contains(pid) ? .appOutput : .none, browser: browser,
                     documentPath: documentPath(window), browserProfile: browser ? profileName(windowTitle: title, appName: name) : nil))
                 appEntries.append(contentsOf: ChatProjects.scan(window: window, app: app))
-                for (tabIndex, tab) in tabs(in: window).enumerated() {
-                    appEntries.append(WindowEntry(id: "\(pid):\(index):tab:\(tabIndex)", pid: pid,
+                for tab in tabs(in: window) {
+                    appEntries.append(WindowEntry(id: "\(pid):window:\(CFHash(window)):tab:\(CFHash(tab.0))", pid: pid,
                         appName: name, title: tab.1, icon: app.icon, element: window,
                         minimized: minimized, hidden: app.isHidden, terminal: terminal, tab: tab.0,
                         audio: browser ? tabAudio(tab.0) : (audioPIDs.contains(pid) ? .appOutput : .none), browser: browser,
