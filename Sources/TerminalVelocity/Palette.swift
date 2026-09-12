@@ -9,6 +9,8 @@ struct SearchResults {
 }
 
 @MainActor final class PaletteModel: ObservableObject {
+    @Published var showCleanup = false
+    let cleanup = TabCleanupModel()
     @Published var showAIGrouping = false
     @Published var aiCandidates: [GroupingCandidate] = []
     @Published var aiSelectedCandidates: Set<String> = []
@@ -190,7 +192,7 @@ struct PaletteView: View {
     @FocusState private var searching: Bool
 
     var body: some View {
-        if Features.experimentalAgents && model.showAIGrouping { AIGroupingView(model: model) } else if Features.experimentalAgents && model.objectiveMode { ObjectiveView(model: model) } else { windowPalette }
+        if model.showCleanup { TabCleanupView(model: model, cleanup: model.cleanup) } else if Features.experimentalAgents && model.showAIGrouping { AIGroupingView(model: model) } else if Features.experimentalAgents && model.objectiveMode { ObjectiveView(model: model) } else { windowPalette }
     }
 
     private var windowPalette: some View {
@@ -297,6 +299,7 @@ struct PaletteView: View {
             }
             Divider()
             HStack(spacing: 16) {
+                Button { model.showCleanup = true } label: { Label("Clean up tabs", systemImage: "rectangle.stack.badge.minus") }.buttonStyle(.plain)
                 if Features.experimentalAgents {
                     Button { model.beginAIGrouping() } label: { Label("AI groups", systemImage: "sparkles") }.buttonStyle(.plain)
                 }

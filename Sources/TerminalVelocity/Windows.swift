@@ -21,6 +21,7 @@ struct WindowEntry: Identifiable, @unchecked Sendable {
     var browserProfile: String? = nil
     var browserProfileIcon: NSImage? = nil
     var chatProject: ChatProject? = nil
+    var browserPinned = false
     var documentFolder: String {
         guard let documentPath else { return "" }
         return (documentPath as NSString).deletingLastPathComponent
@@ -286,7 +287,8 @@ enum WindowCatalog {
                             icon: app.icon, element: matchedWindow ?? match?.element, minimized: tab.minimized, hidden: app.isHidden,
                             terminal: false, tab: match?.tab, browserTab: tab,
                             audio: match?.audio ?? .none, browser: true,
-                            browserProfile: profileName(windowTitle: tab.windowTitle, appName: name) ?? associatedWindow?.browserProfile ?? match?.browserProfile ?? (tab.browserID == "com.google.Chrome" ? "Profile unavailable" : nil)))
+                            browserProfile: profileName(windowTitle: tab.windowTitle, appName: name) ?? associatedWindow?.browserProfile ?? match?.browserProfile ?? (tab.browserID == "com.google.Chrome" ? "Profile unavailable" : nil),
+                            browserPinned: match?.tab.map { tabPinned($0) } ?? false))
                     }
                 }
             }
@@ -361,6 +363,11 @@ enum WindowCatalog {
             if title.lowercased().hasSuffix(suffix.lowercased()) { title.removeLast(suffix.count) }
         }
         return title
+    }
+
+    static func tabPinned(_ tab: AXUIElement) -> Bool {
+        [kAXDescriptionAttribute, kAXHelpAttribute, kAXRoleDescriptionAttribute]
+            .compactMap { attribute(tab, $0) as? String }.joined(separator: " ").lowercased().contains("pinned")
     }
 
     static func tabAudio(_ tab: AXUIElement) -> AudioBadge {

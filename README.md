@@ -112,3 +112,14 @@ Objectives, window grouping, AI grouping, and title-derived agent synopses are d
 ### Menu bar placement
 
 Velocity keeps its icon a fixed width, including when agents need attention. Hold **Command** and drag the icon nearer the clock to keep it away from the notch; macOS saves its placement. Left-click opens search; right-click opens settings. **Option–Shift–A** opens Velocity even when the menu bar is crowded.
+
+### Native tab cleanup
+
+Choose **Clean up tabs** in Velocity or **Clean Up Tabs…** in its menu. It uses the same macOS Accessibility and browser Automation permissions as tab search; no browser extension is needed. Chrome and Safari are supported.
+
+- **Remove exact duplicates** closes eligible extra copies in each browser window with one click, keeping at least one copy. Full URLs must match, including query strings and fragments; copies in different windows or profiles are kept separate. It does not run unattended.
+- **Old-tab review** starts tracking activity locally when this version runs. Choose 7, 14, 30, or 90 days without observed activity, check the tabs you want removed, and close the selection. It does not read past browser history and can miss activity between scans or while Velocity is quit.
+- Selected tabs, Chrome tabs that are loading, tabs with detected audio, and tabs without a reliable Accessibility match are excluded. Detected pinned tabs are excluded, but browsers do not expose every pinned state. Tabs are revalidated before closing; browser confirmation dialogs are never answered automatically.
+- **Recently closed** retains the last 100 cleanup URLs locally for reopening. This restores the URL, not unsaved page state or the original browser profile. Activity records store hashed identifiers and timestamps locally. No tab metadata is sent to AI.
+
+Cleanup does not move tabs or create browser tab groups.

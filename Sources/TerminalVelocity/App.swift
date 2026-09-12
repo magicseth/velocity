@@ -22,6 +22,7 @@ final class SearchPanel: NSPanel {
     var keyboardMonitor: Any?
     var refreshTimer: Timer?
     var audioTimer: Timer?
+    var lastCatalogRefresh = Date.distantPast
     var catalogTimer: Timer?
     var activityTimer: Timer?
     var trackingActivity = false
@@ -69,6 +70,7 @@ final class SearchPanel: NSPanel {
         model.choose = { [weak self] in self?.choose() }
         model.chooseEntry = { [weak self] entry in self?.choose(entry) }
         model.closeEntry = { [weak self] entry in self?.close(entry) }
+        model.cleanup.apply = { [weak self] candidates in self?.cleanUpTabs(candidates) }
         model.inspect = { [weak self] entry in self?.inspect(entry) }
         model.refresh = { [weak self] in self?.refresh() }
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -110,6 +112,10 @@ final class SearchPanel: NSPanel {
         keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
             guard let self, self.panel.isKeyWindow else { return event }
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if self.model.showCleanup {
+                if event.keyCode == 53 && !self.model.cleanup.busy { self.model.showCleanup = false; return nil }
+                return event
+            }
             if self.model.showAIGrouping {
                 if event.keyCode == 53 && !self.model.aiLoading { self.model.showAIGrouping = false; return nil }
                 return event
@@ -169,7 +175,8 @@ final class SearchPanel: NSPanel {
         }
         catalogTimer = Timer.scheduledTimer(withTimeInterval: 12, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, self.panel.isVisible, !self.model.showHelp else { return }
+                guard let self, (self.panel.isVisible || self.model.browserTabsEnabled), !self.model.showHelp else { return }
+                if !self.panel.isVisible && Date().timeIntervalSince(self.lastCatalogRefresh) < 60 { return }
                 self.refresh()
             }
         }
@@ -251,10 +258,13 @@ final class SearchPanel: NSPanel {
         status.button?.toolTip = "Terminal Velocity — \(model.shortcut)"
     }
 
+    @objc func showTabCleanup() { show(); model.showCleanup = true }
+
     @objc func statusClicked() {
         if NSApp.currentEvent?.type == .rightMouseUp {
             let menu = NSMenu()
             add("Search Windows…", #selector(openFromMenuBar), to: menu)
+            add("Clean Up Tabs…", #selector(showTabCleanup), to: menu)
             if Features.experimentalAgents { add("Switch Objectives…  ⌃⌥O", #selector(switchObjectives), to: menu) }
             add("Attention (\(attentionCount))", #selector(showAttention), to: menu)
             let notifications = NSMenuItem(title: "Agent Notifications", action: #selector(toggleNotifications), keyEquivalent: "")
@@ -392,6 +402,7 @@ final class SearchPanel: NSPanel {
         if let frontmost = NSWorkspace.shared.frontmostApplication,
            frontmost.processIdentifier != ProcessInfo.processInfo.processIdentifier { previousApp = frontmost }
         model.previewEntry = nil
+        model.showCleanup = false
         model.showHelp = false
         model.editingGroup = false
         model.openAllApps()
@@ -410,7 +421,8 @@ final class SearchPanel: NSPanel {
 
     func refresh() {
         model.trusted = AXIsProcessTrusted()
-        guard model.trusted, !scanning else { return }
+        guard model.trusted, !scanning, !model.cleanup.busy else { return }
+        lastCatalogRefresh = Date()
         scanning = true
         model.loading = true
         let pid = previousApp?.processIdentifier
@@ -421,6 +433,7 @@ final class SearchPanel: NSPanel {
                 guard let self else { return }
                 self.snapshotGeneration += 1
                 self.model.all = snapshot.entries
+                self.model.cleanup.observe(snapshot.entries)
                 self.model.reconnectGroups()
                 self.model.observeObjectives()
                 self.observeAttention()
@@ -500,6 +513,10 @@ final class SearchPanel: NSPanel {
         let companions = Features.experimentalAgents ? WindowGroup.companions(of: entry, groups: model.groups, entries: model.all) : []
         Task { @MainActor in
             if await focusGroup(companions, selected: entry) {
+                if var tab = entry.browserTab {
+                    tab.isActive = true
+                    model.cleanup.activity.observe([tab])
+                }
                 model.memory.observe(entry.memoryKey)
                 panel.orderOut(nil)
             } else {
