@@ -10,7 +10,7 @@ struct AIGroupingView: View {
                 Spacer()
                 Button("Back") { model.showAIGrouping = false }.disabled(model.aiLoading)
             }
-            Text("Convex AI Gateway groups selected windows by shared work. Review the metadata below before sending. Whole windows are grouped; tab titles provide context. Up to \(AIGrouping.windowLimit) ungrouped windows are included per pass.")
+            Text("Convex AI Gateway groups selected windows by shared work. Review the metadata below before sending. Whole windows are grouped; tab titles provide context. All ungrouped windows are included. Batches share a desktop overview and objective catalog to connect related windows across apps.")
                 .font(.system(size: 11)).foregroundStyle(.secondary)
             if model.aiSuggestions.isEmpty {
                 DisclosureGroup("Connection settings", isExpanded: $showConnection) {
@@ -39,9 +39,18 @@ struct AIGroupingView: View {
                 }.disabled(model.aiLoading)
                 Text("Sends this metadata to your Convex backend and its model provider. Terminal output and document/page contents are excluded. Existing groups are excluded.")
                     .font(.system(size: 10)).foregroundStyle(.secondary)
-                Button(model.aiLoading ? "Finding shared objectives…" : "Suggest from \(model.aiSelectedCandidates.count) windows") { model.requestAIGrouping() }
-                    .disabled(model.aiLoading || model.aiSelectedCandidates.count < 2).buttonStyle(.borderedProminent)
+                if model.aiLoading {
+                    HStack {
+                        ProgressView(value: Double(model.aiProcessed), total: Double(max(1, model.aiSelectedCandidates.count)))
+                        Text("\(model.aiProcessed) / \(model.aiSelectedCandidates.count) windows").font(.caption)
+                        Button("Pause") { model.aiTask?.cancel() }
+                    }
+                } else {
+                    Button(model.aiProcessed > 0 && model.aiScan?.complete == false ? "Resume grouping" : "Suggest from \(model.aiSelectedCandidates.count) windows") { model.requestAIGrouping() }
+                        .disabled(model.aiSelectedCandidates.count < 2).buttonStyle(.borderedProminent)
+                }
             } else {
+                Text("Reviewed \(model.aiProcessed) windows").font(.caption).foregroundStyle(.secondary)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
                         ForEach($model.aiSuggestions) { $suggestion in
@@ -72,12 +81,6 @@ struct AIGroupingView: View {
             }
             if let error = model.aiError {
                 Text(error).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
-                if model.aiSuggestions.isEmpty && model.aiSelectedCandidates.count > 2 {
-                    Button("Retry with \(max(2, model.aiSelectedCandidates.count / 2)) windows") {
-                        model.aiSelectedCandidates = AIGrouping.smallerSelection(model.aiCandidates, selected: model.aiSelectedCandidates)
-                        model.requestAIGrouping()
-                    }.disabled(model.aiLoading)
-                }
             }
         }.padding(20).frame(width: 680, height: 510).background(.regularMaterial)
             .onAppear { showConnection = model.aiEndpoint.isEmpty }

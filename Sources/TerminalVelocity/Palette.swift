@@ -15,6 +15,9 @@ struct SearchResults {
     @Published var aiSuggestions: [SuggestedObjective] = []
     @Published var aiChosenGroups: Set<String> = []
     @Published var aiLoading = false
+    @Published var aiProcessed = 0
+    var aiScan: GroupingScan?
+    var aiTask: Task<Void, Never>?
     @Published var aiError: String?
     @Published var aiEndpoint = UserDefaults.standard.string(forKey: "groupingEndpoint") ?? ""
     @Published var aiTokenInput = ""

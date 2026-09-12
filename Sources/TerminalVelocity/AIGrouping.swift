@@ -2,7 +2,7 @@ import Foundation
 import Security
 import Darwin
 
-struct GroupingCandidate: Codable, Identifiable {
+struct GroupingCandidate: Codable, Identifiable, Equatable {
     let id: String
     let app: String
     let title: String
@@ -19,13 +19,6 @@ struct SuggestedObjective: Codable, Identifiable {
 struct GroupingResponse: Codable { let groups: [SuggestedObjective] }
 
 enum AIGrouping {
-    static let windowLimit = 20
-
-    static func smallerSelection(_ candidates: [GroupingCandidate], selected: Set<String>) -> Set<String> {
-        let current = candidates.filter { selected.contains($0.id) }
-        return Set(current.prefix(max(2, current.count / 2)).map(\.id))
-    }
-
     static func metadata(_ value: String, limit: Int) -> String {
         let title = value.components(separatedBy: " ◂ ")[0]
             .replacingOccurrences(of: NSHomeDirectory(), with: "~")
@@ -35,10 +28,10 @@ enum AIGrouping {
     }
     static func validate(_ groups: [SuggestedObjective], known: Set<String>) throws {
         var used: Set<String> = []
-        guard groups.count <= 40 else { throw Failure("Too many suggested objectives.") }
+        guard groups.count <= known.count / 2 else { throw Failure("Too many suggested objectives.") }
         for group in groups {
             guard !group.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, group.name.count <= 80,
-                  group.memberIds.count >= 2, group.memberIds.count <= 120,
+                  group.memberIds.count >= 2, group.memberIds.count <= known.count,
                   ["high", "medium", "low"].contains(group.confidence), !group.reason.isEmpty, group.reason.count <= 300 else {
                 throw Failure("The gateway returned an invalid objective.")
             }
@@ -110,36 +103,36 @@ enum AIGrouping {
             switch status {
             case 401, 403: detail = "Check the device token in Connection settings."
             case 404: detail = "Check the endpoint: use the deployment’s .convex.site URL followed by /suggest-objectives."
-            case 413: detail = "Select fewer windows and try again."
+            case 413: detail = "The metadata request exceeded the server’s size limit."
             case 429: detail = "The gateway is busy. Wait a moment and try again."
-            case 500, 502, 503, 504: detail = "The grouping service failed. Try fewer windows; check the Convex logs if it continues."
+            case 500, 502, 503, 504: detail = "The grouping service failed. Retry to continue from the last completed batch."
             default: detail = "Check the grouping endpoint in Connection settings and try again."
             }
         }
         return "Grouping failed" + (status.map { " (HTTP \($0))" } ?? "") + ": " + detail
     }
-    static func suggest(candidates: [GroupingCandidate], endpoint: String, token: String) async throws -> [SuggestedObjective] {
+    static func classify(_ batch: ClassificationRequest, endpoint: String, token: String) async throws -> [ObjectiveAssignment] {
         guard Features.experimentalAgents else { throw Failure("Experimental agent features are disabled in this build.") }
-        let url = try endpointURL(endpoint)
-        guard (2...windowLimit).contains(candidates.count), Set(candidates.map(\.id)).count == candidates.count else { throw Failure("Select between 2 and \(windowLimit) distinct windows.") }
+        let base = try endpointURL(endpoint)
+        let url = base.deletingLastPathComponent().appendingPathComponent("classify-objectives")
         guard token.count >= 32 else { throw Failure("A device token of at least 32 characters is required.") }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.timeoutInterval = 90
+        request.timeoutInterval = 150
         request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(["candidates": candidates])
-        guard (request.httpBody?.count ?? 0) <= 120000 else { throw Failure("This selection contains too much metadata. Select fewer windows and try again.") }
-        let session = URLSession(configuration: .ephemeral, delegate: NoRedirects(), delegateQueue: nil)
+        request.httpBody = try JSONEncoder().encode(batch)
+        guard (request.httpBody?.count ?? 0) <= 2_000_000 else { throw Failure("The metadata request exceeded 2 MB.") }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForResource = 160
+        let session = URLSession(configuration: configuration, delegate: NoRedirects(), delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw Failure(responseError(status: (response as? HTTPURLResponse)?.statusCode, data: data))
         }
-        guard data.count <= 120000 else { throw Failure("The gateway response was too large.") }
-        let groups = try JSONDecoder().decode(GroupingResponse.self, from: data).groups
-        try validate(groups, known: Set(candidates.map(\.id)))
-        return groups
+        guard data.count <= 200000 else { throw Failure("The gateway response was too large.") }
+        return try JSONDecoder().decode(ClassificationResponse.self, from: data).groups
     }
 }
 private final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
@@ -151,6 +144,8 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Se
     func beginAIGrouping() {
         guard Features.experimentalAgents else { return }
         guard !aiLoading else { showAIGrouping = true; return }
+        aiScan = nil
+        aiProcessed = 0
         aiSnapshot = [:]
         aiCandidates = []
         aiSuggestions = []
@@ -169,10 +164,9 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Se
         }
         for entry in ordered {
             guard let key = entry.windowKey, !assigned.contains(key), seen.insert(key).inserted else { continue }
-            guard aiCandidates.count < AIGrouping.windowLimit else { break }
             let id = "w\(aiCandidates.count + 1)"
             let tabs = all.filter { $0.isTab && ($0.windowKey == key || ($0.pid == entry.pid && $0.browserTab?.windowTitle == entry.title)) }
-                .prefix(6).map { AIGrouping.metadata($0.title, limit: 200) + ($0.browserTab.flatMap { URL(string: $0.url)?.host }.map { " (" + $0 + ")" } ?? "") }
+                .map { AIGrouping.metadata($0.title, limit: 200) + ($0.browserTab.flatMap { URL(string: $0.url)?.host }.map { " (" + $0 + ")" } ?? "") }
             let candidate = GroupingCandidate(id: id, app: AIGrouping.metadata(entry.appName, limit: 100),
                 title: AIGrouping.metadata(entry.title, limit: 400),
                 folder: String(entry.documentFolder.split(separator: "/").suffix(3).joined(separator: "/").prefix(200)), tabs: tabs.map { String($0.prefix(250)) })
@@ -183,20 +177,42 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Se
         showAIGrouping = true
     }
     func requestAIGrouping() {
-        guard Features.experimentalAgents else { return }
-        guard !aiLoading else { return }
-        aiLoading = true; aiError = nil; aiSuggestions = []
+        guard Features.experimentalAgents, !aiLoading else { return }
         let candidates = aiCandidates.filter { aiSelectedCandidates.contains($0.id) }
-        Task { @MainActor in
-            defer { aiLoading = false }
+        guard candidates.count >= 2 else { aiError = "Select at least two windows."; return }
+        if aiScan?.candidates != candidates || aiScan?.endpoint != aiEndpoint {
+            aiScan = GroupingScan(candidates: candidates, endpoint: aiEndpoint)
+        }
+        aiProcessed = aiScan?.processed ?? 0
+        aiLoading = true; aiError = nil; aiSuggestions = []
+        aiTask = Task { @MainActor in
+            defer { aiLoading = false; aiTask = nil }
             do {
                 let token = try AIGrouping.token(aiTokenInput.isEmpty ? nil : aiTokenInput)
                 aiTokenInput = ""
                 UserDefaults.standard.set(aiEndpoint, forKey: "groupingEndpoint")
-                aiSuggestions = try await AIGrouping.suggest(candidates: candidates, endpoint: aiEndpoint, token: token)
+                while let scan = aiScan, !scan.complete {
+                    try Task.checkCancellation()
+                    let request = try scan.nextRequest()
+                    let assignments = try await AIGrouping.classify(request, endpoint: scan.endpoint, token: token)
+                    try Task.checkCancellation()
+                    try aiScan?.accept(assignments, for: request)
+                    aiProcessed = aiScan?.processed ?? 0
+                }
+                aiSuggestions = aiScan?.suggestions ?? []
+                try AIGrouping.validate(aiSuggestions, known: Set(candidates.map(\.id)))
                 aiChosenGroups = Set(aiSuggestions.filter { $0.confidence == "high" }.map(\.id))
-                if aiSuggestions.isEmpty { aiError = "No convincing shared objectives were found. Your existing groups are unchanged." }
-            } catch { aiError = error.localizedDescription }
+                if aiSuggestions.isEmpty { aiError = "All selected windows were checked; no convincing shared objectives were found." }
+            } catch {
+                // A failed batch gets smaller on the next user-initiated retry;
+                // the remaining windows stay in the queue and none are dropped.
+                if Task.isCancelled { aiError = "Paused after \(aiProcessed) of \(candidates.count) windows. Resume to continue." }
+                else {
+                    let reducedSize = max(1, (aiScan?.batchSize ?? 40) / 2)
+                    aiScan?.batchSize = reducedSize
+                    aiError = error.localizedDescription
+                }
+            }
         }
     }
     func applyAISuggestions() {

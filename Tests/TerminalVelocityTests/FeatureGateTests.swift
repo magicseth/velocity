@@ -28,7 +28,7 @@ final class FeatureGateTests: XCTestCase {
     func testPublicGatewayRejectsBeforeNetworking() async {
         guard !Features.experimentalAgents else { return }
         do {
-            _ = try await AIGrouping.suggest(candidates: [], endpoint: "not-a-url", token: "")
+            _ = try await AIGrouping.classify(ClassificationRequest(candidates: [], overview: [], objectives: []), endpoint: "not-a-url", token: "")
             XCTFail("Public builds must reject AI requests")
         } catch {
             XCTAssertTrue(error.localizedDescription.contains("disabled in this build"))
