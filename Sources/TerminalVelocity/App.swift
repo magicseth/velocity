@@ -72,6 +72,7 @@ final class SearchPanel: NSPanel {
         model.inspect = { [weak self] entry in self?.inspect(entry) }
         model.refresh = { [weak self] in self?.refresh() }
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        status.autosaveName = "VelocityStatusItem"
         status.button?.image = Branding.menuIcon()
         status.button?.target = self
         status.button?.action = #selector(statusClicked)
@@ -81,8 +82,9 @@ final class SearchPanel: NSPanel {
         attentionNotifications.changed = { [weak self] count, issue in
             guard let self else { return }
             self.attentionCount = count
-            self.status.length = count > 0 ? NSStatusItem.variableLength : NSStatusItem.squareLength
-            self.status.button?.title = count > 0 ? " \(count)" : ""
+            // Keep attention changes from expanding the crowded menu bar.
+            // The icon dot and tooltip still expose attention and its count.
+            self.status.button?.title = ""
             self.status.button?.image = Branding.menuIcon(attention: count > 0)
             self.status.button?.contentTintColor = count > 0 ? .systemOrange : nil
             self.status.button?.toolTip = issue ?? (count > 0 ? "\(count) agents need your input — click to view" : "Terminal Velocity — \(self.model.shortcut)")
@@ -252,7 +254,7 @@ final class SearchPanel: NSPanel {
     @objc func statusClicked() {
         if NSApp.currentEvent?.type == .rightMouseUp {
             let menu = NSMenu()
-            add("Search Windows…", #selector(toggle), to: menu)
+            add("Search Windows…", #selector(openFromMenuBar), to: menu)
             if Features.experimentalAgents { add("Switch Objectives…  ⌃⌥O", #selector(switchObjectives), to: menu) }
             add("Attention (\(attentionCount))", #selector(showAttention), to: menu)
             let notifications = NSMenuItem(title: "Agent Notifications", action: #selector(toggleNotifications), keyEquivalent: "")
@@ -275,10 +277,18 @@ final class SearchPanel: NSPanel {
             menu.addItem(.separator())
             add("Check for Updates…", #selector(checkForUpdates), to: menu)
             add("Quit Terminal Velocity", #selector(quit), to: menu)
-            status.menu = menu
-            status.button?.performClick(nil)
-            status.menu = nil
-        } else { toggle() }
+            // Present directly without temporarily replacing the status item's
+            // menu/action routing, which can interfere with subsequent clicks.
+            if let button = status.button {
+                menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.minY), in: button)
+            }
+        } else { openFromMenuBar() }
+    }
+
+    @objc func openFromMenuBar() {
+        // Let menu-bar tracking finish before taking focus. A click means open,
+        // even if a stale palette still reports itself visible or key.
+        DispatchQueue.main.async { [weak self] in self?.show() }
     }
 
     func add(_ title: String, _ action: Selector, to menu: NSMenu) {

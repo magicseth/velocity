@@ -15,7 +15,7 @@ Velocity discovers open Chrome and Safari tabs, accessible terminal tabs and app
 
 Native macOS menu-bar app. macOS 14+. The public build runs locally and makes no AI requests.
 
-[**Download Velocity**](https://github.com/magicseth/velocity/releases/tag/v0.1.9)
+[**Download Velocity**](https://github.com/magicseth/velocity/releases/tag/v0.1.10)
 
 ![Velocity window search, with agent attention first and playing audio next](docs/screenshots/window-switcher.png)
 
@@ -108,3 +108,7 @@ Project indexing currently supports Claude. ChatGPT/Codex remains available thro
 ## Experimental builds
 
 Objectives, window grouping, AI grouping, and title-derived agent synopses are disabled in public downloads. They remain available together through a build-time opt-in; there is no public settings toggle. See [experimental build instructions](docs/experimental.md).
+
+### Menu bar placement
+
+Velocity keeps its icon a fixed width, including when agents need attention. Hold **Command** and drag the icon nearer the clock to keep it away from the notch; macOS saves its placement. Left-click opens search; right-click opens settings. **Option–Shift–A** opens Velocity even when the menu bar is crowded.
