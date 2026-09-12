@@ -2,6 +2,17 @@ import XCTest
 @testable import TerminalVelocity
 
 final class SelectionTests: XCTestCase {
+    @MainActor func testRecommittingSameSearchTextDoesNotResetSelection() {
+        let model = PaletteModel()
+        model.all = [entry("Terminal"), entry("Chrome")]
+        model.query = "velocity"
+        model.move(1)
+        model.query = "velocity"
+        XCTAssertEqual(model.resultState.selectedEntry?.appName, "Chrome")
+        model.openAllApps()
+        XCTAssertEqual(model.resultState.selectedEntry?.appName, "Terminal")
+    }
+
     private func entry(_ id: String) -> WindowEntry {
         WindowEntry(id: id, pid: 1, appName: id, title: "velocity", icon: nil, element: nil,
                     minimized: false, hidden: false, terminal: id == "Terminal")

@@ -37,7 +37,7 @@ struct SearchResults {
         guard count > 0 else { return }
         objectiveSelection = (objectiveSelection + delta + count) % count
     }
-    @Published var query = "" { didSet { filter() } }
+    @Published var query = "" { didSet { if query != oldValue { filter() } } }
     @Published private(set) var resultState = SearchResults()
     var results: [WindowEntry] { resultState.entries }
     var selected: Int { results.firstIndex { $0.id == resultState.selectedID } ?? -1 }
@@ -124,6 +124,7 @@ struct SearchResults {
 
     func openAllApps() {
         query = ""
+        filter()
     }
 
     func filter(preserveSelection: Bool = false) {
@@ -243,12 +244,14 @@ struct PaletteView: View {
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(spacing: 3) {
+                    // Native list virtualization uses a fixed row height rather than
+                    // estimated lazy-stack geometry as hundreds of results refresh.
+                    List {
                             ForEach(Array(displayed.entries.enumerated()), id: \.element.id) { index, entry in
                                 Button { model.chooseEntry?(entry) } label: { row(entry, index: index) }
                                     .buttonStyle(.plain)
                                     .focusable(false)
+                                    .frame(height: 58)
                                     .background(entry.id == displayed.selectedID ? Color.accentColor.opacity(0.14) : .clear, in: RoundedRectangle(cornerRadius: 9))
                                     .contextMenu {
                                         if entry.terminal { Button("Inspect prompt…") { model.inspect?(entry) } }
@@ -256,14 +259,24 @@ struct PaletteView: View {
                                             Button("Edit window group…") { model.editGroup(entry) }
                                         }
                                     }
+                                    .listRowInsets(EdgeInsets(top: 0, leading: 10, bottom: 3, trailing: 10))
+                                    .listRowSeparator(.hidden)
+                                    .listRowBackground(Color.clear)
                                     .id(entry.id)
                             }
-                        }.padding(10)
-                    }.onChange(of: model.selected) { _, index in
-                        guard model.results.indices.contains(index) else { return }
-                        proxy.scrollTo(model.results[index].id)
-                    }.onChange(of: model.query) { _, _ in
-                        if let first = model.results.first { proxy.scrollTo(first.id, anchor: .top) }
+                    }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .environment(\.defaultMinListRowHeight, 58)
+                    .transaction { $0.animation = nil }
+                    .onChange(of: [model.query, displayed.selectedID ?? "", String(model.selected)]) { _, _ in
+                        guard let id = displayed.selectedEntry?.id else { return }
+                        // Scroll once, after the native list commits its new rows.
+                        // Separate query/selection callbacks can fight each other.
+                        DispatchQueue.main.async {
+                            guard model.resultState.selectedEntry?.id == id else { return }
+                            proxy.scrollTo(id)
+                        }
                     }
                 }
             }
