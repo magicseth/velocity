@@ -1,6 +1,21 @@
 # Velocity
 
-A native macOS menu-bar window switcher. Search running apps and their window titles, then press Return to jump to a result. The public build runs locally and makes no AI requests. Requires macOS 14 or later.
+**Chrome’s Command–Shift–A, for your whole Mac.**
+
+You know Chrome’s tab search: press a shortcut, type a few words, and jump straight to the tab. Velocity brings that experience across your browser tabs, terminal sessions, app windows, and open AI conversations.
+
+Press **Option–Shift–A**, type what you’re looking for, and hit **Return**. One search box. One list. The agent waiting for your answer, the ChatGPT conversation open in a browser tab, the Claude session in a terminal, the document you were editing—all within reach.
+
+- **Find work across apps.** Search titles, browser URLs, app names, and exposed project or document paths.
+- **See which agents need you.** Recognized input requests rise to the top, with optional notifications.
+- **Find what’s making noise.** Audio indicators and Chrome profile badges help distinguish results.
+- **Pick up where you left off.** Recent destinations rise in the list; apps can launch even when they’re closed.
+
+Velocity discovers open Chrome and Safari tabs, accessible terminal tabs and app windows, and exposed Claude projects. AI conversations are searchable through those open tabs and windows; it does not index your entire ChatGPT or Claude conversation history. Availability depends on what each app exposes.
+
+Native macOS menu-bar app. macOS 14+. The public build runs locally and makes no AI requests.
+
+[**Download Velocity**](https://github.com/magicseth/velocity/releases/tag/v0.1.3)
 
 ![Velocity window search, with agent attention first and playing audio next](docs/screenshots/window-switcher.png)
 
@@ -39,7 +54,6 @@ On first launch, enable **Terminal Velocity** in **System Settings → Privacy &
 
 The list includes windows exposed by each app’s Accessibility implementation, including minimized and hidden windows, plus named tab controls exposed in window chrome. Tab results bring the containing window forward, then select the requested tab. Apps with no exposed windows appear as application results. Apps that do not expose accessible tab controls cannot have their inactive tabs indexed this way. Full-screen windows and other Spaces are subject to macOS and the target app’s window-switching behavior.
 
-
 ## Agent attention and prompts
 
 Agent requests appear at the top of the unified list when the search is empty. `@attention` and `@waiting` select explicit input requests; `@ready` separately selects idle hints. `@agents` includes recognized working titles too.
@@ -47,7 +61,6 @@ Agent requests appear at the top of the unified list when the search is empty. `
 Codex’s `[ ! ] Action Required` and `[ . ] Action Required` title prefixes indicate user input. Claude’s `✳` prefix is an idle hint, not proof of a permission request; `◐` / `◑` indicate work in supported versions. Claude detection also requires its name in the terminal title. Custom titles, terminal multiplexers, disabled title updates, and version differences can hide these signals. Known terminal titles refresh alongside audio every two seconds, including while the palette is closed.
 
 Select a terminal and press **Command–I** (or right-click → **Inspect prompt…**) for the last 6,000 characters of accessible terminal text. This is a manually refreshed snapshot and may include other recent output. Inactive tabs without accessible selection/text require opening first. **Open to answer** focuses the terminal; this app does not send approval keystrokes or answer prompts automatically. Preview text stays in memory.
-
 
 ## Chrome, Safari, and audio
 
@@ -71,7 +84,6 @@ swift test
 
 The diagnostic command needs its own Accessibility authorization when launched from a terminal. Live window discovery and focusing require an interactive authorized macOS session.
 
-
 ## Agent notifications
 
 When a terminal title reports **Action Required**, TV sends a native macOS notification with sound and keeps an attention count in the menu bar. Clicking the banner or menu-bar icon opens the unified list with attention first. Window/tab duplicates and blinking title markers produce one alert; brief title-read gaps do not retrigger it. Idle titles alone do not notify because they do not prove an agent has a question.
@@ -79,7 +91,6 @@ When a terminal title reports **Action Required**, TV sends a native macOS notif
 Allow notifications when macOS asks. Right-click TV’s menu-bar icon for **Agent Notifications**, **Test Notification**, and **Notification Settings**. macOS notification settings and Focus control banner and sound delivery. Detection runs while TV is running and has Accessibility access; no terminal contents are sent to a server for notifications.
 
 Opening Velocity from its shortcut or menu-bar icon shows all apps in one list. Agents needing input come first when the search is empty, followed by audio items, then the usual recent results. Notification clicks open the same list. Matching window/tab attention entries are merged in the unified list.
-
 
 ## Chat app projects
 
