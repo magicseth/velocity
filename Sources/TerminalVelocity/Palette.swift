@@ -113,7 +113,7 @@ import ApplicationServices
     var choose: (() -> Void)?
     var chooseEntry: ((WindowEntry) -> Void)?
     var refresh: (() -> Void)?
-    var shortcut = "⌃⌥K"
+    var shortcut = "⌥⇧A"
 
     func openAllApps() {
         query = ""

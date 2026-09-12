@@ -35,10 +35,11 @@ final class SearchPanel: NSPanel {
     var previousApp: NSRunningApplication?
     var scanning = false
     let scanner = DispatchQueue(label: "dev.terminalvelocity.windows", qos: .userInitiated)
-    let shortcuts: [(String, UInt32)] = [
-        ("⌃⌥K", UInt32(controlKey | optionKey)),
-        ("⌘⇧K", UInt32(cmdKey | shiftKey)),
-        ("⌃⌘K", UInt32(controlKey | cmdKey))
+    let shortcuts: [(String, UInt32, UInt32)] = [
+        ("⌃⌥K", UInt32(controlKey | optionKey), UInt32(kVK_ANSI_K)),
+        ("⌘⇧K", UInt32(cmdKey | shiftKey), UInt32(kVK_ANSI_K)),
+        ("⌃⌘K", UInt32(controlKey | cmdKey), UInt32(kVK_ANSI_K)),
+        ("⌥⇧A", UInt32(optionKey | shiftKey), UInt32(kVK_ANSI_A))
     ]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -97,7 +98,7 @@ final class SearchPanel: NSPanel {
         menu.addItem(edit)
         NSApp.mainMenu = menu
         installHotkeyHandler()
-        registerShortcut(UserDefaults.standard.integer(forKey: "shortcut"))
+        registerShortcut((UserDefaults.standard.object(forKey: "shortcut") as? Int) ?? 3)
         if Features.experimentalAgents && RegisterEventHotKey(UInt32(kVK_ANSI_O), UInt32(controlKey | optionKey),
             EventHotKeyID(signature: 0x54564C43, id: 2), GetApplicationEventTarget(), 0, &objectiveHotKey) != noErr {
             model.message = "Objective shortcut unavailable. Use the menu-bar menu."
@@ -231,9 +232,9 @@ final class SearchPanel: NSPanel {
     }
 
     func registerShortcut(_ requested: Int) {
-        let index = shortcuts.indices.contains(requested) ? requested : 0
+        let index = shortcuts.indices.contains(requested) ? requested : 3
         var replacement: EventHotKeyRef?
-        let result = RegisterEventHotKey(UInt32(kVK_ANSI_K), shortcuts[index].1,
+        let result = RegisterEventHotKey(shortcuts[index].2, shortcuts[index].1,
                                         EventHotKeyID(signature: 0x54564C43, id: 1), GetApplicationEventTarget(), 0, &replacement)
         guard result == noErr else {
             model.message = "Shortcut unavailable. Choose another in the menu."

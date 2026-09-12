@@ -25,7 +25,7 @@ On first launch, enable **Terminal Velocity** in **System Settings → Privacy &
 
 ## Use
 
-- **Control–Option–K** or click the menu-bar icon: open / dismiss search.
+- **Option–Shift–A** or click the menu-bar icon: open / dismiss search. Existing installations keep their chosen shortcut; change it from the menu-bar menu.
 - Installed apps in `/Applications`, `/System/Applications`, and `~/Applications` are searchable even when closed. Choose a **Launch app** result to open it.
 - Type any part of an app name, window title, URL, or exposed document path. Project and folder names in those fields work too; document contents are not indexed.
 - Use `@AppName` or `app:"Visual Studio Code"` for any app, and `folder:"My Projects"` for document parent folders. Folder metadata depends on the app exposing its document URL; inactive tabs never inherit the selected document’s path.
