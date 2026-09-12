@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Velocity \u2014 Tidy Tabs",
+  "version": "0.1.0",
+  "minimum_chrome_version": "121",
+  "description": "Organize related tabs, review stale tabs, and clean up exact duplicates within this Chrome profile.",
+  "permissions": [
+    "tabs",
+    "tabGroups",
+    "storage",
+    "alarms"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Organize tabs with Velocity",
+    "default_icon": "icon.png"
+  },
+  "icons": {
+    "128": "icon.png"
+  },
+  "incognito": "not_allowed",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqa3nquIQebj2TxCjDLgPUqM3a/PILKoYOldCpLBnM05s/zovd9HVExrSppyxe3z1AoVvBsmlWBgddAOZiIGfdGdBENMNAiBVRHQfJQHPDYA4O4GE7jGesEc7xfZwTS6GKkcjnxVRuYwe6kcQZdwEANiutsNJS+0b9FBUiZX2v4AdkUyUTmCl3blbwQgj4ETms1uWdP4Vww3qAdUbhVoyi1xs07O/El2NuSOTFMkaDocy0i97ODwEVlmpAl5NTEK3/im32J/r9Th18DBqfJfewUUZXtheY2gXc+AtrJE0L9xlzLSzicHGqkcDe+Mm738HM1SBsOGnOzGZ+QxH+KYr6QIDAQAB"
+}

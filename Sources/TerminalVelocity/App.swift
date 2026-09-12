@@ -110,6 +110,10 @@ final class SearchPanel: NSPanel {
         keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
             guard let self, self.panel.isKeyWindow else { return event }
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if self.model.showTabOrganizer {
+                if event.keyCode == 53 { self.model.showTabOrganizer = false; return nil }
+                return event
+            }
             if self.model.showAIGrouping {
                 if event.keyCode == 53 && !self.model.aiLoading { self.model.showAIGrouping = false; return nil }
                 return event
@@ -255,6 +259,7 @@ final class SearchPanel: NSPanel {
         if NSApp.currentEvent?.type == .rightMouseUp {
             let menu = NSMenu()
             add("Search Windows…", #selector(openFromMenuBar), to: menu)
+            add("Tidy Browser Tabs…", #selector(showTabOrganizer), to: menu)
             if Features.experimentalAgents { add("Switch Objectives…  ⌃⌥O", #selector(switchObjectives), to: menu) }
             add("Attention (\(attentionCount))", #selector(showAttention), to: menu)
             let notifications = NSMenuItem(title: "Agent Notifications", action: #selector(toggleNotifications), keyEquivalent: "")
@@ -284,6 +289,8 @@ final class SearchPanel: NSPanel {
             }
         } else { openFromMenuBar() }
     }
+
+    @objc func showTabOrganizer() { show(); model.showTabOrganizer = true }
 
     @objc func openFromMenuBar() {
         // Let menu-bar tracking finish before taking focus. A click means open,
@@ -387,6 +394,7 @@ final class SearchPanel: NSPanel {
     }
 
     func show() {
+        model.showTabOrganizer = false
         model.showAIGrouping = false
         model.objectiveMode = false
         if let frontmost = NSWorkspace.shared.frontmostApplication,

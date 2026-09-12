@@ -17,6 +17,10 @@ case "${VELOCITY_EXPERIMENTAL:-0}" in
 esac
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/TerminalVelocity "$APP/Contents/MacOS/TerminalVelocity"
+mkdir -p "$APP/Contents/Resources/TidyTabs"
+for file in manifest.json background.js planner.js engine.js organizer.html organizer.css organizer.js icon.png; do
+    cp "browser-companion/$file" "$APP/Contents/Resources/TidyTabs/$file"
+done
 cp resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp resources/Info.plist "$APP/Contents/Info.plist"
 if [[ "${VELOCITY_EXPERIMENTAL:-0}" == 1 ]]; then
