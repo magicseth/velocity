@@ -204,7 +204,7 @@ struct PaletteView: View {
                     .textFieldStyle(.plain).font(.system(size: 23)).focused($searching)
                     .accessibilityLabel("Search windows and apps")
                      .onSubmit {
-                        if let entry = displayed.selectedEntry { model.chooseEntry?(entry) }
+                        if let entry = model.resultState.selectedEntry { model.chooseEntry?(entry) }
                         else { model.message = "That result is no longer available. Select a result or refresh." }
                     }
                 Text("esc").help("Close search and return to your previous app")
