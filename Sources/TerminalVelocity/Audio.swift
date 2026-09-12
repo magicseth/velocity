@@ -13,8 +13,15 @@ enum AudioBadge: String, Sendable {
     }
     var symbol: String { self == .muted ? "speaker.slash.fill" : "speaker.wave.2.fill" }
 
+    static func removingMemoryAnnotation(_ label: String) -> String {
+        // Chrome appends this accessibility-only suffix after its audio state.
+        // Match a measured size at the end, not arbitrary page-title keywords.
+        label.replacingOccurrences(of: #" - Memory usage - [0-9][0-9.,]*\s+(?:bytes|[KMGT]B)$"#,
+                                   with: "", options: [.regularExpression, .caseInsensitive])
+    }
+
     static func fromTabMetadata(_ labels: [String]) -> AudioBadge {
-        let labels = labels.map { $0.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) }
+        let labels = labels.map { removingMemoryAnnotation($0).lowercased().trimmingCharacters(in: .whitespacesAndNewlines) }
         if labels.contains(where: {
             $0.hasSuffix(" - audio muted") || $0.hasSuffix(", audio muted") ||
             $0 == "this tab's audio is being muted." || $0 == "this tab's audio is being muted" ||

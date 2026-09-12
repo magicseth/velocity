@@ -3,6 +3,16 @@ import AppKit
 @testable import TerminalVelocity
 
 final class AudioTests: XCTestCase {
+    func testChromeMemorySuffixPreservesAudioAndTabIdentity() {
+        let playing = "Answering your Dumb Saturn Questions - YouTube - Audio playing - Memory usage - 309 MB"
+        XCTAssertEqual(AudioBadge.fromTabMetadata([playing]), .playing)
+        XCTAssertEqual(WindowCatalog.cleanTabTitle(playing), "Answering your Dumb Saturn Questions - YouTube")
+        XCTAssertEqual(AudioBadge.fromTabMetadata(["Music - Audio muted - Memory usage - 1.2 GB"]), .muted)
+        XCTAssertEqual(WindowCatalog.cleanTabTitle("Music - Memory usage - 512 KB"), "Music")
+        XCTAssertEqual(WindowCatalog.cleanTabTitle("How to reduce Memory usage - a guide"), "How to reduce Memory usage - a guide")
+        XCTAssertEqual(AudioBadge.fromTabMetadata(["Audio playing - Memory usage explained"]), .none)
+    }
+
     func testChromeAudioAnnotations() {
         XCTAssertEqual(AudioBadge.fromTabMetadata(["Music - Audio playing"]), .playing)
         XCTAssertEqual(AudioBadge.fromTabMetadata(["Music - Audio muted"]), .muted)

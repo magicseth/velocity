@@ -15,7 +15,7 @@ Velocity discovers open Chrome and Safari tabs, accessible terminal tabs and app
 
 Native macOS menu-bar app. macOS 14+. The public build runs locally and makes no AI requests.
 
-[**Download Velocity**](https://github.com/magicseth/velocity/releases/tag/v0.1.10)
+[**Download Velocity**](https://github.com/magicseth/velocity/releases/tag/v0.1.11)
 
 ![Velocity window search, with agent attention first and playing audio next](docs/screenshots/window-switcher.png)
 

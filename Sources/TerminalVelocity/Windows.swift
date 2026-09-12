@@ -356,7 +356,7 @@ enum WindowCatalog {
     }
 
     static func cleanTabTitle(_ title: String) -> String {
-        var title = title
+        var title = AudioBadge.removingMemoryAnnotation(title)
         for suffix in [" - Audio playing", " - Audio muted", ", Audio playing", ", Audio muted", " - Playing audio"] {
             if title.lowercased().hasSuffix(suffix.lowercased()) { title.removeLast(suffix.count) }
         }
