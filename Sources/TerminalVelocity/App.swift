@@ -339,22 +339,32 @@ final class SearchPanel: NSPanel {
             guard let key = $0.windowKey, key != selected.windowKey, seen.insert(key).inserted else { return false }
             return true
         }
-        // Let each activation finish before the next app, then restore the chosen
-        // window last. Suppress our focus observer throughout the handoff.
-        var succeeded = true
-        for entry in companions + [selected] {
-            if !WindowCatalog.focus(entry) { succeeded = false; continue }
-            try? await Task.sleep(for: .milliseconds(180))
-            guard NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid else {
-                return false // The user or macOS moved focus elsewhere; don't steal it back.
+        let result = await FocusSequence.run(companions: companions, selected: selected) { entry in
+            guard WindowCatalog.focus(entry) else { return false }
+            // Activation is asynchronous and can take longer than a fixed 180 ms,
+            // especially when an app is hidden or switching Spaces.
+            for _ in 0..<20 {
+                if NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid { break }
+                try? await Task.sleep(for: .milliseconds(50))
             }
+            guard NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid else { return false }
+            // Let the delayed window raise complete before selecting its tab.
+            try? await Task.sleep(for: .milliseconds(140))
+            guard NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid else { return false }
+            let selectedTab: Bool
             if let project = entry.chatProject, let window = entry.element {
-                if !(await ChatProjects.select(project, window: window)) { succeeded = false }
-            } else if !(await WindowCatalog.selectFocusedTab(entry)) { succeeded = false }
+                selectedTab = await ChatProjects.select(project, window: window)
+            } else {
+                selectedTab = await WindowCatalog.selectFocusedTab(entry)
+            }
+            return selectedTab && NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid
         }
-        lastGroupedWindow = selected.windowKey
-        lastGroupedPosition = WindowCatalog.position(of: selected)
-        return succeeded
+        if result.selectedFocused {
+            lastGroupedWindow = selected.windowKey
+            lastGroupedPosition = WindowCatalog.position(of: selected)
+            if !result.companionsFocused { model.message = "Opened your selection; some related windows couldn’t be brought forward." }
+        }
+        return result.selectedFocused
     }
     @objc func toggle() { panel.isVisible ? dismiss(restore: true) : show() }
 
@@ -462,7 +472,9 @@ final class SearchPanel: NSPanel {
                 model.memory.observe(entry.memoryKey)
                 panel.orderOut(nil)
             } else {
-                model.message = "Couldn’t select the requested window or tab. The list has been refreshed."
+                model.message = "Couldn’t open the selected window or tab. Choose it again after refresh."
+                NSApp.activate()
+                panel.makeKeyAndOrderFront(nil)
                 refresh()
             }
         }
