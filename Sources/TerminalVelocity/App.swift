@@ -522,6 +522,9 @@ final class SearchPanel: NSPanel {
         }
         let companions = Features.experimentalAgents ? WindowGroup.companions(of: entry, groups: model.groups, entries: model.all) : []
         Task { @MainActor in
+            // Conversation navigation uses a guarded native click. Remove the floating
+            // palette before hit-testing the destination sidebar.
+            if entry.conversation != nil { panel.orderOut(nil) }
             if await focusGroup(companions, selected: entry) {
                 if var tab = entry.browserTab {
                     tab.isActive = true
