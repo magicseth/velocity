@@ -258,7 +258,7 @@ extension AppDelegate {
                     scanner.async {
                         guard TabCleanup.eligible(current.entry),
                               let ax = current.entry.tab,
-                              WindowCatalog.attribute(ax, "AXRole") != nil,
+                              Accessibility.attribute(ax, "AXRole") != nil,
                               WindowCatalog.tabAudio(ax) == .none, !WindowCatalog.tabPinned(ax) else {
                             continuation.resume(returning: false); return
                         }

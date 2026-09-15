@@ -1,81 +1,5 @@
 import AppKit
 import ApplicationServices
-import CryptoKit
-
-struct WindowEntry: Identifiable, @unchecked Sendable {
-    let id: String
-    let pid: pid_t
-    let appName: String
-    var title: String
-    let icon: NSImage?
-    let element: AXUIElement?
-    let minimized: Bool
-    let hidden: Bool
-    let terminal: Bool
-    var tab: AXUIElement? = nil
-    var browserTab: BrowserTab? = nil
-    var audio: AudioBadge = .none
-    var browser: Bool = false
-    var documentPath: String? = nil
-    var launchURL: URL? = nil
-    var browserProfile: String? = nil
-    var browserProfileIcon: NSImage? = nil
-    var chatProject: ChatProject? = nil
-    var conversation: ConversationDestination? = nil
-    // A destination can represent its owning window even when their labels differ.
-    var representedWindowTitle: String? = nil
-    var browserPinned = false
-    var documentFolder: String {
-        guard let documentPath else { return "" }
-        return (documentPath as NSString).deletingLastPathComponent
-    }
-    var searchText: String {
-        [title, representedWindowTitle, browserTab?.url, documentPath, browserProfile, chatProject?.mode].compactMap { $0 }.joined(separator: " ")
-    }
-    var groupFingerprint: String {
-        let normalized = title.replacingOccurrences(of: #"\[\s*[!.]\s*\] Action Required\s*\|?\s*|[✳◐◑]\s*"#, with: "", options: .regularExpression)
-        let identity = appName + ":" + (documentPath ?? "") + ":" + normalized
-        return SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
-    }
-    var attentionTaskTitle: String {
-        // Window titles prepend a folder name; tab titles may prepend its full path.
-        if let range = title.range(of: "Action Required") {
-            return String(title[range.lowerBound...]).components(separatedBy: " ◂ ")[0]
-                .replacingOccurrences(of: #"\s+—\s+\d+[×x]\d+\s*$"#, with: "", options: .regularExpression)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return title
-    }
-    var attention: AgentAttention { AgentAttention.detect(title: title, terminal: terminal) }
-    var windowKey: String? {
-        chatProject == nil && conversation == nil ? element.map { "\(pid):\(CFHash($0))" } : nil
-    }
-    var memoryKey: String {
-        let identity: String
-        if let conversation { identity = conversation.key }
-        else if let chatProject { identity = appName + ":project:" + chatProject.key }
-        else if let launchURL { identity = "launch:" + launchURL.path }
-        else if let browserTab { identity = browserTab.browserID + ":" + browserTab.url }
-        else if let documentPath { identity = appName + ":" + documentPath }
-        else if terminal { identity = appName + ":" + title.components(separatedBy: " — ")[0] }
-        else { identity = appName + ":" + WindowCatalog.cleanTabTitle(title) }
-        // Remember only user-selected identifiers, not a browsing log.
-        return SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
-    }
-    var isTab: Bool { tab != nil || browserTab != nil }
-    var subtitle: String {
-        if let conversation { return appName + (conversation.appID == Conversations.slackID ? " · Channel / DM" : " · Conversation") }
-        if let chatProject { return appName + (chatProject.mode == "Workspace" ? " · Workspace" : " · Project · " + chatProject.mode) }
-        if launchURL != nil { return "Launch app" }
-        var parts = [appName, isTab ? "Tab" : element == nil ? "Application" : "Window"]
-        if let browserProfile { parts.append(browserProfile) }
-        if let address = browserTab?.url, let host = URL(string: address)?.host { parts.append(host) }
-        if !documentFolder.isEmpty { parts.append((documentFolder as NSString).abbreviatingWithTildeInPath) }
-        if minimized { parts.append("Minimized") }
-        if hidden { parts.append("Hidden") }
-        return parts.joined(separator: " · ")
-    }
-}
 
 struct WindowSnapshot: @unchecked Sendable {
     var entries: [WindowEntry]
@@ -89,14 +13,8 @@ enum WindowCatalog {
         "com.github.wez.wezterm", "co.zeit.hyper"
     ]
 
-    static func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
-        return value
-    }
-
     static func documentPath(_ element: AXUIElement) -> String? {
-        guard let value = attribute(element, kAXDocumentAttribute) else { return nil }
+        guard let value = Accessibility.attribute(element, kAXDocumentAttribute) else { return nil }
         return localDocumentPath(String(describing: value))
     }
 
@@ -114,19 +32,19 @@ enum WindowCatalog {
         func walk(_ element: AXUIElement, depth: Int, inTabGroup: Bool) {
             guard depth < 14, remaining > 0 else { return }
             remaining -= 1
-            let role = attribute(element, kAXRoleAttribute) as? String ?? ""
+            let role = Accessibility.attribute(element, kAXRoleAttribute) as? String ?? ""
             if ["AXTextArea", "AXWebArea", "AXTable", "AXOutline"].contains(role) { return }
-            let subrole = attribute(element, kAXSubroleAttribute) as? String ?? ""
+            let subrole = Accessibility.attribute(element, kAXSubroleAttribute) as? String ?? ""
             let isTab = role == "AXTab" || subrole == "AXTabButton" || (inTabGroup && role == kAXRadioButtonRole)
             if isTab {
                 let title = [kAXTitleAttribute, kAXDescriptionAttribute, kAXHelpAttribute]
-                    .compactMap { attribute(element, $0) as? String }
+                    .compactMap { Accessibility.attribute(element, $0) as? String }
                     .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                 if let title { found.append((element, title)) }
                 return
             }
-            let children = (role == kAXTabGroupRole ? attribute(element, "AXTabs") as? [AXUIElement] : nil)
-                ?? attribute(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
+            let children = (role == kAXTabGroupRole ? Accessibility.attribute(element, "AXTabs") as? [AXUIElement] : nil)
+                ?? Accessibility.attribute(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
             for child in children {
                 walk(child, depth: depth + 1, inTabGroup: inTabGroup || role == kAXTabGroupRole)
             }
@@ -166,8 +84,8 @@ enum WindowCatalog {
     static func promptPreview(_ entry: WindowEntry) -> String {
         guard entry.terminal, let window = entry.element else { return "No accessible terminal text is available." }
         if let tab = entry.tab {
-            let selected = (attribute(tab, kAXValueAttribute) as? NSNumber)?.boolValue == true
-                || (attribute(tab, "AXSelected") as? Bool) == true
+            let selected = (Accessibility.attribute(tab, kAXValueAttribute) as? NSNumber)?.boolValue == true
+                || (Accessibility.attribute(tab, "AXSelected") as? Bool) == true
             guard selected else { return "This tab is in the background. Open it to read its current prompt." }
         }
         var remaining = 400
@@ -175,12 +93,12 @@ enum WindowCatalog {
             guard remaining > 0, depth < 12 else { return nil }
             remaining -= 1
             AXUIElementSetMessagingTimeout(node, 0.1)
-            let role = attribute(node, kAXRoleAttribute) as? String
+            let role = Accessibility.attribute(node, kAXRoleAttribute) as? String
             if role == "AXWebArea" { return nil }
-            if role == kAXTextAreaRole, let value = attribute(node, kAXValueAttribute) as? String, !value.isEmpty {
+            if role == kAXTextAreaRole, let value = Accessibility.attribute(node, kAXValueAttribute) as? String, !value.isEmpty {
                 return String(value.suffix(6000)).trimmingCharacters(in: .whitespacesAndNewlines)
             }
-            for child in attribute(node, kAXChildrenAttribute) as? [AXUIElement] ?? [] {
+            for child in Accessibility.attribute(node, kAXChildrenAttribute) as? [AXUIElement] ?? [] {
                 if let value = read(child, depth: depth + 1) { return value }
             }
             return nil
@@ -190,7 +108,7 @@ enum WindowCatalog {
 
     static func position(of entry: WindowEntry?) -> CGPoint? {
         guard let window = entry?.element,
-              let raw = attribute(window, kAXPositionAttribute), CFGetTypeID(raw) == AXValueGetTypeID() else { return nil }
+              let raw = Accessibility.attribute(window, kAXPositionAttribute), CFGetTypeID(raw) == AXValueGetTypeID() else { return nil }
         let value = unsafeBitCast(raw, to: AXValue.self)
         guard AXValueGetType(value) == .cgPoint else { return nil }
         var point = CGPoint.zero
@@ -201,7 +119,7 @@ enum WindowCatalog {
         let pid = app.processIdentifier
         let application = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(application, 0.1)
-        guard let raw = attribute(application, kAXFocusedWindowAttribute),
+        guard let raw = Accessibility.attribute(application, kAXFocusedWindowAttribute),
               CFGetTypeID(raw) == AXUIElementGetTypeID() else { return nil }
         let window = unsafeBitCast(raw, to: AXUIElement.self)
         AXUIElementSetMessagingTimeout(window, 0.1)
@@ -209,10 +127,10 @@ enum WindowCatalog {
         // A selected tab is more specific than its containing window.
         if let selected = candidates.first(where: {
             guard let tab = $0.tab else { return false }
-            return (attribute(tab, kAXValueAttribute) as? NSNumber)?.boolValue == true
-                || (attribute(tab, "AXSelected") as? Bool) == true
+            return (Accessibility.attribute(tab, kAXValueAttribute) as? NSNumber)?.boolValue == true
+                || (Accessibility.attribute(tab, "AXSelected") as? Bool) == true
         }) { return selected }
-        let title = attribute(window, kAXTitleAttribute) as? String ?? app.localizedName ?? "Application"
+        let title = Accessibility.attribute(window, kAXTitleAttribute) as? String ?? app.localizedName ?? "Application"
         if let matching = candidates.first(where: { !$0.isTab && $0.title == title }) { return matching }
         return WindowEntry(id: "\(pid):focused:\(CFHash(window))", pid: pid,
                            appName: app.localizedName ?? "Application", title: title, icon: app.icon,
@@ -245,12 +163,12 @@ enum WindowCatalog {
             let browser = BrowserTabs.supported.contains(app.bundleIdentifier ?? "")
             let application = AXUIElementCreateApplication(pid)
             AXUIElementSetMessagingTimeout(application, 0.2)
-            let windows = attribute(application, kAXWindowsAttribute) as? [AXUIElement] ?? []
+            let windows = Accessibility.attribute(application, kAXWindowsAttribute) as? [AXUIElement] ?? []
             var appEntries: [WindowEntry] = []
             for window in windows {
                 AXUIElementSetMessagingTimeout(window, 0.15)
-                let title = (attribute(window, kAXTitleAttribute) as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                let minimized = attribute(window, kAXMinimizedAttribute) as? Bool ?? false
+                let title = (Accessibility.attribute(window, kAXTitleAttribute) as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let minimized = Accessibility.attribute(window, kAXMinimizedAttribute) as? Bool ?? false
                 appEntries.append(WindowEntry(id: "\(pid):window:\(CFHash(window))", pid: pid, appName: name,
                     title: title.isEmpty ? "Untitled window" : title, icon: app.icon,
                     element: window, minimized: minimized, hidden: app.isHidden, terminal: terminal,
@@ -354,33 +272,6 @@ enum WindowCatalog {
         }
     }
 
-    static func removingRepresentedWindows(_ entries: [WindowEntry]) -> [WindowEntry] {
-        let destinations = entries.filter { $0.representedWindowTitle != nil }
-        return entries.filter { window in
-            guard window.windowKey != nil, !window.isTab, window.launchURL == nil else { return true }
-            return !destinations.contains { destination in
-                guard destination.pid == window.pid,
-                      destination.representedWindowTitle == window.title,
-                      let parent = destination.element, let element = window.element else { return false }
-                return CFEqual(parent, element)
-            }
-        }
-    }
-
-    static func removingBrowserWindowDuplicates(_ entries: [WindowEntry]) -> [WindowEntry] {
-        let tabs = entries.filter { $0.browser && $0.isTab && $0.windowKey != nil }
-        return entries.filter { window in
-            guard window.browser, !window.isTab, let key = window.windowKey else { return true }
-            return !tabs.contains { tab in
-                tab.windowKey == key && (
-                    tab.browserTab?.isActive == true ||
-                    (window.audio == .playing && tab.audio == .playing) ||
-                    browserWindowTitle(window.title, appName: window.appName) == browserWindowTitle(tab.title, appName: tab.appName)
-                )
-            }
-        }
-    }
-
     static func cleanTabTitle(_ title: String) -> String {
         var title = AudioBadge.removingMemoryAnnotation(title)
         for suffix in [" - Audio playing", " - Audio muted", ", Audio playing", ", Audio muted", " - Playing audio"] {
@@ -391,15 +282,15 @@ enum WindowCatalog {
 
     static func tabPinned(_ tab: AXUIElement) -> Bool {
         [kAXDescriptionAttribute, kAXHelpAttribute, kAXRoleDescriptionAttribute]
-            .compactMap { attribute(tab, $0) as? String }.joined(separator: " ").lowercased().contains("pinned")
+            .compactMap { Accessibility.attribute(tab, $0) as? String }.joined(separator: " ").lowercased().contains("pinned")
     }
 
     static func tabAudio(_ tab: AXUIElement) -> AudioBadge {
-        var labels = [kAXTitleAttribute, kAXDescriptionAttribute, kAXHelpAttribute].compactMap { attribute(tab, $0) as? String }
+        var labels = [kAXTitleAttribute, kAXDescriptionAttribute, kAXHelpAttribute].compactMap { Accessibility.attribute(tab, $0) as? String }
         // Safari exposes a Mute/Unmute button in its tab. Only inspect the tab's
         // own controls, never mute buttons in webpage contents.
-        for child in (attribute(tab, kAXChildrenAttribute) as? [AXUIElement] ?? []).prefix(12) {
-            labels += [kAXTitleAttribute, kAXDescriptionAttribute, kAXHelpAttribute].compactMap { attribute(child, $0) as? String }
+        for child in (Accessibility.attribute(tab, kAXChildrenAttribute) as? [AXUIElement] ?? []).prefix(12) {
+            labels += [kAXTitleAttribute, kAXDescriptionAttribute, kAXHelpAttribute].compactMap { Accessibility.attribute(child, $0) as? String }
         }
         return AudioBadge.fromTabMetadata(labels)
     }
@@ -411,7 +302,7 @@ enum WindowCatalog {
             if entry.terminal || (entry.browser && !entry.isTab), let source = entry.tab ?? entry.element {
                 AXUIElementSetMessagingTimeout(source, 0.1)
                 if let title = [kAXTitleAttribute, kAXDescriptionAttribute, kAXHelpAttribute]
-                    .compactMap({ attribute(source, $0) as? String }).first(where: { !$0.isEmpty }) {
+                    .compactMap({ Accessibility.attribute(source, $0) as? String }).first(where: { !$0.isEmpty }) {
                     entry.title = title
                 }
             }
@@ -422,83 +313,4 @@ enum WindowCatalog {
         return applyingBrowserAudio(updated)
     }
 
-    static func liveTab(for entry: WindowEntry) -> AXUIElement? {
-        guard let original = entry.tab, let window = entry.element else { return nil }
-        let candidates = tabs(in: window)
-        if let same = candidates.first(where: { CFEqual($0.0, original) }) { return same.0 }
-        // Rebuilt tab controls are safe to resolve only by a unique title.
-        func normalized(_ title: String) -> String {
-            title.replacingOccurrences(of: #"\[\s*[!.]\s*\]"#, with: "[!]", options: .regularExpression)
-        }
-        let matches = candidates.filter { normalized($0.1) == normalized(entry.title) }
-        return matches.count == 1 ? matches[0].0 : nil
-    }
-
-    static func tabIsSelected(_ tab: AXUIElement) -> Bool? {
-        if let value = attribute(tab, "AXSelected") as? NSNumber { return value.boolValue }
-        if let value = attribute(tab, kAXValueAttribute) as? NSNumber { return value.boolValue }
-        return nil
-    }
-
-    @MainActor static func selectFocusedTab(_ entry: WindowEntry) async -> Bool {
-        // Browser scripting has already selected its stable tab ID.
-        if let browserTab = entry.browserTab { return BrowserTabs.select(browserTab) }
-        guard entry.tab != nil else { return true }
-        guard let tab = liveTab(for: entry) else { return false }
-        if tabIsSelected(tab) == true { return true }
-        let pressed = AXUIElementPerformAction(tab, kAXPressAction as CFString)
-        try? await Task.sleep(for: .milliseconds(60))
-        if tabIsSelected(tab) == true { return true }
-        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid else { return false }
-        // Terminal may expose a selectable radio button instead of a pressable tab.
-        let setValue = AXUIElementSetAttributeValue(tab, kAXValueAttribute as CFString, kCFBooleanTrue)
-        try? await Task.sleep(for: .milliseconds(60))
-        if let selected = tabIsSelected(tab) { return selected }
-        return pressed == .success || setValue == .success
-    }
-
-    @MainActor static func focus(_ entry: WindowEntry) -> Bool {
-        guard let app = NSRunningApplication(processIdentifier: entry.pid), !app.isTerminated else { return false }
-        if let browserTab = entry.browserTab {
-            // Scripting owns the exact browser destination. AX windows from the
-            // scan may have been recreated or associated with another tab; never
-            // raise those cached windows after selecting a stable browser ID.
-            app.unhide()
-            if NSWorkspace.shared.frontmostApplication?.processIdentifier != entry.pid {
-                if NSApp.isActive {
-                    NSApp.yieldActivation(to: app)
-                    guard app.activate(from: .current, options: []) else { return false }
-                } else {
-                    guard app.activate(options: []) else { return false }
-                }
-            }
-            return BrowserTabs.select(browserTab)
-        }
-        app.unhide()
-        if let window = entry.element {
-            let result = AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
-            if result == .invalidUIElement { return false }
-        }
-        // Keep our palette active until macOS accepts the handoff. Hiding our
-        // last window first can give activation to Finder instead.
-        if NSWorkspace.shared.frontmostApplication?.processIdentifier != entry.pid {
-            let activated: Bool
-            if NSApp.isActive {
-                NSApp.yieldActivation(to: app)
-                activated = app.activate(from: .current, options: [])
-            } else {
-                activated = app.activate(options: [])
-            }
-            guard activated else { return false }
-        }
-        guard let window = entry.element else { return true }
-        AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
-        let raised = AXUIElementPerformAction(window, kAXRaiseAction as CFString)
-        // Some apps restore their previously focused window during activation.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            guard NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid else { return }
-            AXUIElementPerformAction(window, kAXRaiseAction as CFString)
-        }
-        return raised == .success
-    }
 }

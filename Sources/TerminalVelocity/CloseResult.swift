@@ -24,9 +24,9 @@ extension WindowEntry {
             guard await WindowCatalog.selectFocusedTab(entry), WindowCatalog.tabIsSelected(live) == true else { return false }
             let axApp = AXUIElementCreateApplication(entry.pid)
             guard NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid,
-                  let focused = WindowCatalog.attribute(axApp, kAXFocusedWindowAttribute),
+                  let focused = Accessibility.attribute(axApp, kAXFocusedWindowAttribute),
                   CFGetTypeID(focused) == AXUIElementGetTypeID(), CFEqual(focused, window),
-                  let raw = WindowCatalog.attribute(axApp, kAXMenuBarAttribute), CFGetTypeID(raw) == AXUIElementGetTypeID() else { return false }
+                  let raw = Accessibility.attribute(axApp, kAXMenuBarAttribute), CFGetTypeID(raw) == AXUIElementGetTypeID() else { return false }
             // Invoke the app's ordinary Command-W menu action. Native unsaved-work
             // and running-process prompts are left for the user to answer.
             let menu = unsafeBitCast(raw, to: AXUIElement.self)
@@ -40,16 +40,16 @@ extension WindowEntry {
     }
 
     static func pressCloseControl(_ element: AXUIElement) -> Bool {
-        if let raw = WindowCatalog.attribute(element, kAXCloseButtonAttribute), CFGetTypeID(raw) == AXUIElementGetTypeID() {
+        if let raw = Accessibility.attribute(element, kAXCloseButtonAttribute), CFGetTypeID(raw) == AXUIElementGetTypeID() {
             return AXUIElementPerformAction(unsafeBitCast(raw, to: AXUIElement.self), kAXPressAction as CFString) == .success
         }
         var actions: CFArray?
         if AXUIElementCopyActionNames(element, &actions) == .success, (actions as? [String])?.contains("AXClose") == true {
             return AXUIElementPerformAction(element, "AXClose" as CFString) == .success
         }
-        let children = WindowCatalog.attribute(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
+        let children = Accessibility.attribute(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
         for child in children.prefix(30) {
-            if WindowCatalog.attribute(child, kAXSubroleAttribute) as? String == kAXCloseButtonSubrole {
+            if Accessibility.attribute(child, kAXSubroleAttribute) as? String == kAXCloseButtonSubrole {
                 return AXUIElementPerformAction(child, kAXPressAction as CFString) == .success
             }
         }
@@ -58,10 +58,10 @@ extension WindowEntry {
 
     static func closeMenuItem(_ element: AXUIElement, depth: Int) -> AXUIElement? {
         guard depth < 5 else { return nil }
-        if (WindowCatalog.attribute(element, "AXMenuItemCmdChar") as? String)?.lowercased() == "w",
-           (WindowCatalog.attribute(element, "AXMenuItemCmdModifiers") as? NSNumber)?.intValue == 0,
-           (WindowCatalog.attribute(element, kAXEnabledAttribute) as? NSNumber)?.boolValue == true { return element }
-        for child in (WindowCatalog.attribute(element, kAXChildrenAttribute) as? [AXUIElement] ?? []).prefix(100) {
+        if (Accessibility.attribute(element, "AXMenuItemCmdChar") as? String)?.lowercased() == "w",
+           (Accessibility.attribute(element, "AXMenuItemCmdModifiers") as? NSNumber)?.intValue == 0,
+           (Accessibility.attribute(element, kAXEnabledAttribute) as? NSNumber)?.boolValue == true { return element }
+        for child in (Accessibility.attribute(element, kAXChildrenAttribute) as? [AXUIElement] ?? []).prefix(100) {
             if let found = closeMenuItem(child, depth: depth + 1) { return found }
         }
         return nil

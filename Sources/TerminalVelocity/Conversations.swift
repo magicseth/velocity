@@ -18,15 +18,6 @@ enum Conversations {
         let name = description.components(separatedBy: ", ").first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return name.isEmpty ? nil : name
     }
-    private static func string(_ node: AXUIElement, _ key: String) -> String {
-        WindowCatalog.attribute(node, key) as? String ?? ""
-    }
-    private static func children(_ node: AXUIElement) -> [AXUIElement] {
-        WindowCatalog.attribute(node, kAXChildrenAttribute) as? [AXUIElement] ?? []
-    }
-    private static func label(_ node: AXUIElement) -> String {
-        [kAXTitleAttribute, kAXDescriptionAttribute, kAXValueAttribute].map { string(node, $0) }.first { !$0.isEmpty } ?? ""
-    }
     static func current(window: AXUIElement, appID: String) -> [(ConversationDestination, AXUIElement)] {
         guard [messagesID, slackID].contains(appID) else { return [] }
         let deadline = Date().addingTimeInterval(1)
@@ -37,37 +28,37 @@ enum Conversations {
             guard sidebar == nil, depth < 20, visited.count < 1500, Date() < deadline,
                   visited.insert(CFHash(node)).inserted else { return }
             AXUIElementSetMessagingTimeout(node, 0.05)
-            let role = string(node, kAXRoleAttribute)
-            let identifier = string(node, kAXIdentifierAttribute)
+            let role = Accessibility.string(node, kAXRoleAttribute)
+            let identifier = Accessibility.string(node, kAXIdentifierAttribute)
             if appID == messagesID && identifier == "ConversationList" { sidebar = node; return }
-            if appID == slackID && role == kAXOutlineRole && label(node) == "Channels and direct messages" { sidebar = node; return }
-            if role == "AXWebArea", let url = WindowCatalog.attribute(node, kAXURLAttribute) {
+            if appID == slackID && role == kAXOutlineRole && Accessibility.label(node, includingValue: true) == "Channels and direct messages" { sidebar = node; return }
+            if role == "AXWebArea", let url = Accessibility.attribute(node, kAXURLAttribute) {
                 let raw = (url as? URL)?.absoluteString ?? (url as? String ?? "")
                 scope = slackScope(raw) ?? ""
             }
             if [kAXTextAreaRole, kAXTextFieldRole, kAXStaticTextRole, "AXList"].contains(role) ||
                 ["TranscriptCollectionView", "MessageEntryView"].contains(identifier) { return }
-            for child in children(node) { find(child, depth: depth + 1) }
+            for child in Accessibility.children(node) { find(child, depth: depth + 1) }
         }
         find(window, depth: 0)
         guard let sidebar, appID != slackID || !scope.isEmpty else { return [] }
         var result: [(ConversationDestination, AXUIElement)] = []
         if appID == messagesID {
-            for node in children(sidebar) {
-                if let name = messagesName(string(node, kAXDescriptionAttribute)) {
+            for node in Accessibility.children(sidebar) {
+                if let name = messagesName(Accessibility.string(node, kAXDescriptionAttribute)) {
                     result.append((.init(appID: appID, name: name, scope: ""), node))
                 }
             }
         } else {
             func texts(_ node: AXUIElement, depth: Int) -> [String] {
                 guard depth < 5, Date() < deadline else { return [] }
-                if string(node, kAXRoleAttribute) == kAXStaticTextRole { return [label(node)] }
-                return children(node).flatMap { texts($0, depth: depth + 1) }
+                if Accessibility.string(node, kAXRoleAttribute) == kAXStaticTextRole { return [Accessibility.label(node, includingValue: true)] }
+                return Accessibility.children(node).flatMap { texts($0, depth: depth + 1) }
             }
             func rows(_ node: AXUIElement, depth: Int) {
                 guard depth < 12, Date() < deadline else { return }
-                let nodes = children(node)
-                if string(node, kAXRoleAttribute) == kAXRowRole && label(node).isEmpty {
+                let nodes = Accessibility.children(node)
+                if Accessibility.string(node, kAXRoleAttribute) == kAXRowRole && Accessibility.label(node, includingValue: true).isEmpty {
                     let names = texts(node, depth: 0).filter { !$0.isEmpty }
                     if names.count == 1 {
                         result.append((.init(appID: appID, name: names[0], scope: scope), node))
@@ -98,12 +89,12 @@ enum Conversations {
         // behind navigation, so prefer the actual conversation header when available.
         func header(_ node: AXUIElement, depth: Int) -> String? {
             guard depth < 5 else { return nil }
-            if string(node, kAXIdentifierAttribute) == "ConversationTitle" {
-                return messagesName(label(node))
+            if Accessibility.string(node, kAXIdentifierAttribute) == "ConversationTitle" {
+                return messagesName(Accessibility.label(node, includingValue: true))
             }
-            if ["ConversationList", "TranscriptCollectionView", "MessageEntryView"].contains(string(node, kAXIdentifierAttribute)) { return nil }
-            if [kAXTextAreaRole, kAXTextFieldRole, kAXStaticTextRole].contains(string(node, kAXRoleAttribute)) { return nil }
-            for child in children(node) {
+            if ["ConversationList", "TranscriptCollectionView", "MessageEntryView"].contains(Accessibility.string(node, kAXIdentifierAttribute)) { return nil }
+            if [kAXTextAreaRole, kAXTextFieldRole, kAXStaticTextRole].contains(Accessibility.string(node, kAXRoleAttribute)) { return nil }
+            for child in Accessibility.children(node) {
                 if let found = header(child, depth: depth + 1) { return found }
             }
             return nil
@@ -112,15 +103,15 @@ enum Conversations {
         if appID == messagesID, let name = header(window, depth: 0) {
             active = rows.filter { $0.0.name == name }
         } else {
-            active = rows.filter { WindowCatalog.attribute($0.1, kAXSelectedAttribute) as? Bool == true }
+            active = rows.filter { Accessibility.attribute($0.1, kAXSelectedAttribute) as? Bool == true }
         }
         let selectedKey = active.count == 1 ? active[0].0.key : nil
-        let windowTitle = string(window, kAXTitleAttribute)
+        let windowTitle = Accessibility.string(window, kAXTitleAttribute)
         return rows.map { destination, _ in
             WindowEntry(id: "\(app.processIdentifier):conversation:\(CFHash(window)):\(destination.key)",
                         pid: app.processIdentifier, appName: app.localizedName ?? "", title: destination.name,
                         icon: app.icon, element: window,
-                        minimized: WindowCatalog.attribute(window, kAXMinimizedAttribute) as? Bool ?? false,
+                        minimized: Accessibility.attribute(window, kAXMinimizedAttribute) as? Bool ?? false,
                         hidden: app.isHidden, terminal: false, conversation: destination,
                         representedWindowTitle: destination.key == selectedKey && !windowTitle.isEmpty ? windowTitle : nil)
         }
@@ -134,14 +125,8 @@ enum Conversations {
         var pid: pid_t = 0
         AXUIElementGetPid(node, &pid)
         guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
-              let p = WindowCatalog.attribute(node, kAXPositionAttribute),
-              let s = WindowCatalog.attribute(node, kAXSizeAttribute),
-              CFGetTypeID(p) == AXValueGetTypeID(), CFGetTypeID(s) == AXValueGetTypeID() else { return false }
-        var point = CGPoint.zero
-        var size = CGSize.zero
-        guard AXValueGetValue(p as! AXValue, .cgPoint, &point),
-              AXValueGetValue(s as! AXValue, .cgSize, &size), size.width > 0, size.height > 0 else { return false }
-        let center = CGPoint(x: point.x + size.width / 2, y: point.y + size.height / 2)
+              let frame = Accessibility.frame(node) else { return false }
+        let center = CGPoint(x: frame.midX, y: frame.midY)
         // Hit-test to avoid clicking content covering a stale/offscreen sidebar row.
         var hit: AXUIElement?
         guard AXUIElementCopyElementAtPosition(AXUIElementCreateSystemWide(), Float(center.x), Float(center.y), &hit) == .success,
@@ -149,8 +134,8 @@ enum Conversations {
         var belongs = false
         for _ in 0..<8 {
             if CFEqual(ancestor, node) { belongs = true; break }
-            guard let parent = WindowCatalog.attribute(ancestor, kAXParentAttribute), CFGetTypeID(parent) == AXUIElementGetTypeID() else { break }
-            ancestor = parent as! AXUIElement
+            guard let parent = Accessibility.element(ancestor, kAXParentAttribute) else { break }
+            ancestor = parent
         }
         guard belongs else { return false }
         CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: center, mouseButton: .left)?.post(tap: .cghidEventTap)

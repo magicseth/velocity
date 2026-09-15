@@ -4,20 +4,23 @@ import SwiftUI
 enum Branding {
     static func menuIcon(attention: Bool = false) -> NSImage {
         let image = NSImage(size: NSSize(width: 20, height: 18), flipped: false) { _ in
-            NSColor.black.setStroke()
-            let mark = NSBezierPath()
-            mark.move(to: NSPoint(x: 2.5, y: 11)); mark.line(to: NSPoint(x: 8, y: 3.5)); mark.line(to: NSPoint(x: 16, y: 14.5))
-            mark.lineWidth = 2.6; mark.lineCapStyle = .round; mark.lineJoinStyle = .round; mark.stroke()
-            let corner = NSBezierPath()
-            corner.move(to: NSPoint(x: 2.5, y: 14)); corner.line(to: NSPoint(x: 2.5, y: 16)); corner.line(to: NSPoint(x: 11, y: 16))
-            corner.lineWidth = 1.3; corner.lineCapStyle = .round; corner.lineJoinStyle = .round; corner.stroke()
             NSColor.black.setFill()
-            if attention { NSBezierPath(ovalIn: NSRect(x: 15, y: 1, width: 4.5, height: 4.5)).fill() }
-            else { NSBezierPath(roundedRect: NSRect(x: 14, y: 2.5, width: 5, height: 1.8), xRadius: 0.9, yRadius: 0.9).fill() }
+            let mark = NSBezierPath()
+            for (index, point) in [NSPoint(x: 1, y: 13), NSPoint(x: 4.5, y: 13),
+                                   NSPoint(x: 8, y: 5.5), NSPoint(x: 14, y: 16),
+                                   NSPoint(x: 18, y: 16), NSPoint(x: 9, y: 1),
+                                   NSPoint(x: 7, y: 1)].enumerated() {
+                if index == 0 { mark.move(to: point) } else { mark.line(to: point) }
+            }
+            mark.close()
+            mark.fill()
+            if attention {
+                NSBezierPath(ovalIn: NSRect(x: 15, y: 1, width: 4, height: 4)).fill()
+            }
             return true
         }
         image.isTemplate = true
-        image.accessibilityDescription = attention ? "Agents need input" : "Terminal Velocity"
+        image.accessibilityDescription = attention ? "Agents need input" : "Velocity"
         return image
     }
 }

@@ -24,7 +24,7 @@ import ApplicationServices
         var seen: Set<String> = []
         for entry in all where pids.contains(entry.pid) {
             guard let key = entry.windowKey, seen.insert(key).inserted, !keys.contains(key), let window = entry.element,
-                  WindowCatalog.attribute(window, kAXMinimizedAttribute) as? Bool == false else { continue }
+                  Accessibility.attribute(window, kAXMinimizedAttribute) as? Bool == false else { continue }
             if AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanTrue) == .success { minimized.append(window) }
         }
     }

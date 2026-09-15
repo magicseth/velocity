@@ -11,18 +11,6 @@ struct ChatProject: Codable, Sendable {
 
 enum ChatProjects {
     static let claudeID = "com.anthropic.claudefordesktop"
-    private static func label(_ element: AXUIElement) -> String {
-        for key in [kAXTitleAttribute, kAXDescriptionAttribute] {
-            if let value = WindowCatalog.attribute(element, key) as? String, !value.isEmpty { return value }
-        }
-        return ""
-    }
-    private static func children(_ element: AXUIElement) -> [AXUIElement] {
-        WindowCatalog.attribute(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
-    }
-    private static func role(_ element: AXUIElement) -> String {
-        WindowCatalog.attribute(element, kAXRoleAttribute) as? String ?? ""
-    }
     static func projectName(_ label: String) -> String? {
         for prefix in ["Toggle chats for ", "Toggle sessions for ", "New session in "] where label.hasPrefix(prefix) {
             let name = String(label.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -37,12 +25,12 @@ enum ChatProjects {
         func walk(_ element: AXUIElement, depth: Int, inSidebar: Bool) {
             guard depth < 24, found.count < 2000, Date() < deadline, seen.insert(CFHash(element)).inserted else { return }
             AXUIElementSetMessagingTimeout(element, 0.05)
-            let kind = role(element)
+            let kind = Accessibility.role(element)
             // Never collect prompt fields or conversation text.
             if [kAXTextAreaRole, kAXTextFieldRole, kAXStaticTextRole].contains(kind) { return }
-            let sidebar = inSidebar || label(element) == "Sidebar"
+            let sidebar = inSidebar || Accessibility.label(element) == "Sidebar"
             found.append((element, sidebar))
-            for child in children(element) { walk(child, depth: depth + 1, inSidebar: sidebar) }
+            for child in Accessibility.children(element) { walk(child, depth: depth + 1, inSidebar: sidebar) }
         }
         walk(window, depth: 0, inSidebar: false)
         return found
@@ -50,31 +38,29 @@ enum ChatProjects {
     private static func current(_ window: AXUIElement) -> [(ChatProject, AXUIElement)] {
         let tree = nodes(window)
         let code = tree.contains { node, sidebar in
-            sidebar && label(node) == "Code" && (WindowCatalog.attribute(node, kAXValueAttribute) as? NSNumber)?.boolValue == true
+            sidebar && Accessibility.label(node) == "Code" && (Accessibility.attribute(node, kAXValueAttribute) as? NSNumber)?.boolValue == true
         }
         var projects: [(ChatProject, AXUIElement)] = []
         for (node, sidebar) in tree {
-            if role(node) == "AXLink" {
-                let raw = WindowCatalog.attribute(node, kAXURLAttribute)
+            if Accessibility.role(node) == "AXLink" {
+                let raw = Accessibility.attribute(node, kAXURLAttribute)
                 let url = (raw as? URL)?.absoluteString ?? raw as? String ?? ""
-                if isProjectURL(url), !label(node).isEmpty {
-                    projects.append((ChatProject(name: label(node), mode: "Chat / Cowork", url: url), node))
+                if isProjectURL(url), !Accessibility.label(node).isEmpty {
+                    projects.append((ChatProject(name: Accessibility.label(node), mode: "Chat / Cowork", url: url), node))
                 }
             }
-            guard sidebar, role(node) == kAXButtonRole else { continue }
-            let text = label(node)
+            guard sidebar, Accessibility.role(node) == kAXButtonRole else { continue }
+            let text = Accessibility.label(node)
             if code, text.hasPrefix("New session in "), let name = projectName(text),
-               let parent = WindowCatalog.attribute(node, kAXParentAttribute), CFGetTypeID(parent) == AXUIElementGetTypeID() {
-                let parentElement = unsafeBitCast(parent, to: AXUIElement.self)
-                if let header = children(parentElement).first(where: { label($0) == name && role($0) == kAXButtonRole }) {
+               let parentElement = Accessibility.element(node, kAXParentAttribute) {
+                if let header = Accessibility.children(parentElement).first(where: { Accessibility.label($0) == name && Accessibility.role($0) == kAXButtonRole }) {
                     projects.append((ChatProject(name: name, mode: "Code", url: nil), header))
                 }
             } else if !code, let name = projectName(text), !text.hasPrefix("New session in ") {
                 // Inner toggle has the exact name; the outer row opens the project.
-                let nestedToggle = children(node).contains { projectName(label($0)) != nil }
-                if !nestedToggle, let parent = WindowCatalog.attribute(node, kAXParentAttribute), CFGetTypeID(parent) == AXUIElementGetTypeID() {
-                    let parentElement = unsafeBitCast(parent, to: AXUIElement.self)
-                    projects.append((ChatProject(name: name, mode: "Chat / Cowork", url: nil), role(parentElement) == kAXButtonRole ? parentElement : node))
+                let nestedToggle = Accessibility.children(node).contains { projectName(Accessibility.label($0)) != nil }
+                if !nestedToggle, let parentElement = Accessibility.element(node, kAXParentAttribute) {
+                    projects.append((ChatProject(name: name, mode: "Chat / Cowork", url: nil), Accessibility.role(parentElement) == kAXButtonRole ? parentElement : node))
                 }
             }
         }
@@ -102,14 +88,19 @@ enum ChatProjects {
                 minimized: false, hidden: app.isHidden, terminal: false, chatProject: project)
         }
     }
+    static func matches(_ project: ChatProject, candidate: ChatProject) -> Bool {
+        guard project.mode == candidate.mode else { return false }
+        if let url = project.url { return candidate.url == url }
+        return project.name == candidate.name
+    }
     @MainActor static func select(_ project: ChatProject, window: AXUIElement) async -> Bool {
         func find() -> AXUIElement? {
-            let matches = current(window).filter { $0.0.mode == project.mode && ($0.0.url == project.url && project.url != nil || $0.0.name == project.name) }
-            return matches.count == 1 ? matches[0].1 : matches.first(where: { $0.0.url == project.url && project.url != nil })?.1
+            let matches = current(window).filter { Self.matches(project, candidate: $0.0) }
+            return matches.count == 1 ? matches[0].1 : nil
         }
         let mode = project.mode == "Code" ? "Code" : "Chat and Cowork"
-        if let selector = nodes(window).first(where: { $0.1 && label($0.0) == mode && role($0.0) == kAXRadioButtonRole })?.0,
-           (WindowCatalog.attribute(selector, kAXValueAttribute) as? NSNumber)?.boolValue != true {
+        if let selector = nodes(window).first(where: { $0.1 && Accessibility.label($0.0) == mode && Accessibility.role($0.0) == kAXRadioButtonRole })?.0,
+           (Accessibility.attribute(selector, kAXValueAttribute) as? NSNumber)?.boolValue != true {
             guard AXUIElementPerformAction(selector, kAXPressAction as CFString) == .success else { return false }
             try? await Task.sleep(for: .milliseconds(250))
         }
@@ -117,7 +108,7 @@ enum ChatProjects {
             if project.mode == "Code" {
                 // Code projects are sidebar groups, not project-detail pages.
                 // Reveal the group without collapsing it or starting a new session.
-                if (WindowCatalog.attribute(target, kAXExpandedAttribute) as? NSNumber)?.boolValue == false {
+                if (Accessibility.attribute(target, kAXExpandedAttribute) as? NSNumber)?.boolValue == false {
                     guard AXUIElementPerformAction(target, kAXPressAction as CFString) == .success else { return false }
                 }
                 AXUIElementPerformAction(target, "AXScrollToVisible" as CFString)
@@ -125,7 +116,7 @@ enum ChatProjects {
             }
             return AXUIElementPerformAction(target, kAXPressAction as CFString) == .success
         }
-        if project.mode != "Code", let all = nodes(window).first(where: { $0.1 && label($0.0) == "All projects" })?.0 {
+        if project.mode != "Code", let all = nodes(window).first(where: { $0.1 && Accessibility.label($0.0) == "All projects" })?.0 {
             guard AXUIElementPerformAction(all, kAXPressAction as CFString) == .success else { return false }
             try? await Task.sleep(for: .milliseconds(350))
             if let target = find() { return AXUIElementPerformAction(target, kAXPressAction as CFString) == .success }

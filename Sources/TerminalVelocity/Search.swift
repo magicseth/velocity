@@ -44,7 +44,7 @@ struct SearchQuery {
         if commands.contains("@muted") && entry.audio != .muted { return false }
         if commands.contains("@recent") && !recent { return false }
         if commands.contains("@tabs") && !entry.isTab { return false }
-        if commands.contains("@windows") && (entry.isTab || entry.element == nil) { return false }
+        if commands.contains("@windows") && (entry.isTab || entry.windowKey == nil) { return false }
         if commands.contains("@minimized") && !entry.minimized { return false }
         return true
     }

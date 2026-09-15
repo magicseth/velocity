@@ -381,6 +381,9 @@ final class SearchPanel: NSPanel {
             guard NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid else { return false }
             let selectedTab: Bool
             if let conversation = entry.conversation, let window = entry.element {
+                // Preserve activation until the handoff above succeeds, then remove
+                // the floating palette before hit-testing the destination sidebar.
+                panel.orderOut(nil)
                 selectedTab = Conversations.select(conversation, window: window)
             } else if let project = entry.chatProject, let window = entry.element {
                 if project.mode == "Workspace" {
@@ -522,9 +525,6 @@ final class SearchPanel: NSPanel {
         }
         let companions = Features.experimentalAgents ? WindowGroup.companions(of: entry, groups: model.groups, entries: model.all) : []
         Task { @MainActor in
-            // Conversation navigation uses a guarded native click. Remove the floating
-            // palette before hit-testing the destination sidebar.
-            if entry.conversation != nil { panel.orderOut(nil) }
             if await focusGroup(companions, selected: entry) {
                 if var tab = entry.browserTab {
                     tab.isActive = true

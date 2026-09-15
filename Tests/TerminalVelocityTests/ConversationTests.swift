@@ -1,4 +1,5 @@
 import XCTest
+import ApplicationServices
 @testable import TerminalVelocity
 
 final class ConversationTests: XCTestCase {
@@ -17,10 +18,12 @@ final class ConversationTests: XCTestCase {
     }
     func testConversationCannotCloseOwningWindow() {
         let entry = WindowEntry(id: "conversation", pid: 1, appName: "Messages", title: "Alex", icon: nil,
-                                element: nil, minimized: false, hidden: false, terminal: false,
+                                element: AXUIElementCreateApplication(4001), minimized: false, hidden: false, terminal: false,
                                 conversation: .init(appID: Conversations.messagesID, name: "Alex", scope: ""))
         XCTAssertFalse(entry.canClose)
         XCTAssertEqual(entry.subtitle, "Messages · Conversation")
         XCTAssertNil(entry.windowKey)
+        XCTAssertFalse(SearchQuery("@windows").accepts(entry, recent: false))
+        XCTAssertTrue(SearchQuery("app:Messages").accepts(entry, recent: false))
     }
 }

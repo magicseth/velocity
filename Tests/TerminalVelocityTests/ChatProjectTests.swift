@@ -2,6 +2,12 @@ import XCTest
 @testable import TerminalVelocity
 
 final class ChatProjectTests: XCTestCase {
+    func testStableURLNeverFallsBackToSameNamedProject() {
+        let target = ChatProject(name: "Work", mode: "Chat / Cowork", url: "https://claude.ai/project/one")
+        XCTAssertFalse(ChatProjects.matches(target, candidate: .init(name: "Work", mode: target.mode, url: "https://claude.ai/project/two")))
+        XCTAssertTrue(ChatProjects.matches(target, candidate: .init(name: "Renamed", mode: target.mode, url: target.url)))
+        XCTAssertFalse(ChatProjects.matches(target, candidate: .init(name: "Work", mode: "Code", url: target.url)))
+    }
     func testProjectLabelsExcludeNavigationAndSessionTitles() {
         XCTAssertEqual(ChatProjects.projectName("Toggle chats for abstract magic"), "abstract magic")
         XCTAssertEqual(ChatProjects.projectName("Toggle sessions for Discovery"), "Discovery")

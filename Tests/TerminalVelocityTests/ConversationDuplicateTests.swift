@@ -19,12 +19,12 @@ final class ConversationDuplicateTests: XCTestCase {
         XCTAssertEqual(Set(model.results.map(\.id)), ["conversation", "separate"])
         model.query = "Ruddick"
         XCTAssertEqual(Set(model.results.map(\.id)), ["conversation", "separate"])
-        XCTAssertEqual(WindowCatalog.removingRepresentedWindows([window]).map(\.id), ["window"])
+        XCTAssertEqual(ResultDeduplication.removingRepresentedWindows([window]).map(\.id), ["window"])
         var unrelated = conversation
         unrelated.representedWindowTitle = nil
-        XCTAssertEqual(WindowCatalog.removingRepresentedWindows([window, unrelated]).count, 2)
+        XCTAssertEqual(ResultDeduplication.removingRepresentedWindows([window, unrelated]).count, 2)
         var stale = conversation
         stale.representedWindowTitle = "Previous conversation"
-        XCTAssertEqual(WindowCatalog.removingRepresentedWindows([window, stale]).count, 2)
+        XCTAssertEqual(ResultDeduplication.removingRepresentedWindows([window, stale]).count, 2)
     }
 }
