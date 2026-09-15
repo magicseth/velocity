@@ -171,6 +171,7 @@ struct SearchResults {
             }
         }
         nextResults = WindowCatalog.removingBrowserWindowDuplicates(nextResults)
+        nextResults = WindowCatalog.removingRepresentedWindows(nextResults)
         // Publish rows and selection together. A vanished selection must not silently
         // become a different app occupying the same row after a background scan.
         resultState = SearchResults(entries: nextResults, selectedID: selectedID ?? nextResults.first?.id)

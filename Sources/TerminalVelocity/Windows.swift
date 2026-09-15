@@ -22,13 +22,15 @@ struct WindowEntry: Identifiable, @unchecked Sendable {
     var browserProfileIcon: NSImage? = nil
     var chatProject: ChatProject? = nil
     var conversation: ConversationDestination? = nil
+    // A destination can represent its owning window even when their labels differ.
+    var representedWindowTitle: String? = nil
     var browserPinned = false
     var documentFolder: String {
         guard let documentPath else { return "" }
         return (documentPath as NSString).deletingLastPathComponent
     }
     var searchText: String {
-        [title, browserTab?.url, documentPath, browserProfile, chatProject?.mode].compactMap { $0 }.joined(separator: " ")
+        [title, representedWindowTitle, browserTab?.url, documentPath, browserProfile, chatProject?.mode].compactMap { $0 }.joined(separator: " ")
     }
     var groupFingerprint: String {
         let normalized = title.replacingOccurrences(of: #"\[\s*[!.]\s*\] Action Required\s*\|?\s*|[✳◐◑]\s*"#, with: "", options: .regularExpression)
@@ -349,6 +351,19 @@ enum WindowCatalog {
                 }
             }
             return entry
+        }
+    }
+
+    static func removingRepresentedWindows(_ entries: [WindowEntry]) -> [WindowEntry] {
+        let destinations = entries.filter { $0.representedWindowTitle != nil }
+        return entries.filter { window in
+            guard window.windowKey != nil, !window.isTab, window.launchURL == nil else { return true }
+            return !destinations.contains { destination in
+                guard destination.pid == window.pid,
+                      destination.representedWindowTitle == window.title,
+                      let parent = destination.element, let element = window.element else { return false }
+                return CFEqual(parent, element)
+            }
         }
     }
 

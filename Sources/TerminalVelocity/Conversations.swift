@@ -92,12 +92,37 @@ enum Conversations {
     }
     static func scan(window: AXUIElement, app: NSRunningApplication) -> [WindowEntry] {
         guard let appID = app.bundleIdentifier else { return [] }
-        return current(window: window, appID: appID).map { destination, _ in
+        let rows = current(window: window, appID: appID)
+        guard !rows.isEmpty else { return [] }
+        // Read the Messages header, not the transcript. Pinned row selection can lag
+        // behind navigation, so prefer the actual conversation header when available.
+        func header(_ node: AXUIElement, depth: Int) -> String? {
+            guard depth < 5 else { return nil }
+            if string(node, kAXIdentifierAttribute) == "ConversationTitle" {
+                return messagesName(label(node))
+            }
+            if ["ConversationList", "TranscriptCollectionView", "MessageEntryView"].contains(string(node, kAXIdentifierAttribute)) { return nil }
+            if [kAXTextAreaRole, kAXTextFieldRole, kAXStaticTextRole].contains(string(node, kAXRoleAttribute)) { return nil }
+            for child in children(node) {
+                if let found = header(child, depth: depth + 1) { return found }
+            }
+            return nil
+        }
+        let active: [(ConversationDestination, AXUIElement)]
+        if appID == messagesID, let name = header(window, depth: 0) {
+            active = rows.filter { $0.0.name == name }
+        } else {
+            active = rows.filter { WindowCatalog.attribute($0.1, kAXSelectedAttribute) as? Bool == true }
+        }
+        let selectedKey = active.count == 1 ? active[0].0.key : nil
+        let windowTitle = string(window, kAXTitleAttribute)
+        return rows.map { destination, _ in
             WindowEntry(id: "\(app.processIdentifier):conversation:\(CFHash(window)):\(destination.key)",
                         pid: app.processIdentifier, appName: app.localizedName ?? "", title: destination.name,
                         icon: app.icon, element: window,
                         minimized: WindowCatalog.attribute(window, kAXMinimizedAttribute) as? Bool ?? false,
-                        hidden: app.isHidden, terminal: false, conversation: destination)
+                        hidden: app.isHidden, terminal: false, conversation: destination,
+                        representedWindowTitle: destination.key == selectedKey && !windowTitle.isEmpty ? windowTitle : nil)
         }
     }
     @MainActor static func select(_ destination: ConversationDestination, window: AXUIElement) -> Bool {
