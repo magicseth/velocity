@@ -129,3 +129,9 @@ Cleanup does not move tabs or create browser tab groups.
 Velocity searches workspace links exposed in Conductor’s sidebar. Search by workspace name or `Conductor`, then press Enter to open the exact workspace. Duplicate names are distinguished internally by workspace ID. Keep the sidebar open and expand a repository to expose its workspaces; collapsed or hidden entries are not indexed yet. No Conductor API token or extension is needed, and conversation contents are not indexed.
 
 Open windows, tabs, and workspaces sort ahead of applications that need launching, including when searching by name.
+
+### Messages and Slack conversations
+
+Search recipient or group names from Messages, and channel or DM names from Slack, then press Enter to open the sidebar destination. Uses existing Accessibility permission—no extension, Slack token, or additional account connection. Conversation results cannot be closed with the row’s close action.
+
+This indexes the navigation entries currently exposed by each app, not its full history or directory. Keep the sidebar open and expand Slack sections; only the active Slack workspace is scanned. Hidden or unloaded conversations are not indexed. Messages labels are shortened before the first comma to exclude message previews; names containing commas may be shortened. Ambiguous duplicate names are omitted. Names stay in the local search index; message bodies are not indexed or uploaded.

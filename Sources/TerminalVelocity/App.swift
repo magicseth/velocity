@@ -380,7 +380,9 @@ final class SearchPanel: NSPanel {
             try? await Task.sleep(for: .milliseconds(140))
             guard NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid else { return false }
             let selectedTab: Bool
-            if let project = entry.chatProject, let window = entry.element {
+            if let conversation = entry.conversation, let window = entry.element {
+                selectedTab = Conversations.select(conversation, window: window)
+            } else if let project = entry.chatProject, let window = entry.element {
                 if project.mode == "Workspace" {
                     selectedTab = ConductorWorkspaces.select(project, window: window)
                 } else {

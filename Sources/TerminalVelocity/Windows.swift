@@ -21,6 +21,7 @@ struct WindowEntry: Identifiable, @unchecked Sendable {
     var browserProfile: String? = nil
     var browserProfileIcon: NSImage? = nil
     var chatProject: ChatProject? = nil
+    var conversation: ConversationDestination? = nil
     var browserPinned = false
     var documentFolder: String {
         guard let documentPath else { return "" }
@@ -45,11 +46,12 @@ struct WindowEntry: Identifiable, @unchecked Sendable {
     }
     var attention: AgentAttention { AgentAttention.detect(title: title, terminal: terminal) }
     var windowKey: String? {
-        chatProject == nil ? element.map { "\(pid):\(CFHash($0))" } : nil
+        chatProject == nil && conversation == nil ? element.map { "\(pid):\(CFHash($0))" } : nil
     }
     var memoryKey: String {
         let identity: String
-        if let chatProject { identity = appName + ":project:" + chatProject.key }
+        if let conversation { identity = conversation.key }
+        else if let chatProject { identity = appName + ":project:" + chatProject.key }
         else if let launchURL { identity = "launch:" + launchURL.path }
         else if let browserTab { identity = browserTab.browserID + ":" + browserTab.url }
         else if let documentPath { identity = appName + ":" + documentPath }
@@ -60,6 +62,7 @@ struct WindowEntry: Identifiable, @unchecked Sendable {
     }
     var isTab: Bool { tab != nil || browserTab != nil }
     var subtitle: String {
+        if let conversation { return appName + (conversation.appID == Conversations.slackID ? " · Channel / DM" : " · Conversation") }
         if let chatProject { return appName + (chatProject.mode == "Workspace" ? " · Workspace" : " · Project · " + chatProject.mode) }
         if launchURL != nil { return "Launch app" }
         var parts = [appName, isTab ? "Tab" : element == nil ? "Application" : "Window"]
@@ -253,6 +256,7 @@ enum WindowCatalog {
                     documentPath: documentPath(window), browserProfile: browser ? profileName(windowTitle: title, appName: name) : nil))
                 appEntries.append(contentsOf: ChatProjects.scan(window: window, app: app))
                 appEntries.append(contentsOf: ConductorWorkspaces.scan(window: window, app: app))
+                appEntries.append(contentsOf: Conversations.scan(window: window, app: app))
                 for tab in tabs(in: window) {
                     appEntries.append(WindowEntry(id: "\(pid):window:\(CFHash(window)):tab:\(CFHash(tab.0))", pid: pid,
                         appName: name, title: tab.1, icon: app.icon, element: window,
