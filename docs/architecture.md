@@ -1,5 +1,9 @@
 # Native search architecture
 
+## Current implementation
+
+The local agent API, authorization boundary, native approval controls, and scope limitations are documented in [agent-access.md](agent-access.md).
+
 Velocity keeps app navigation discovery local. Adapters enumerate navigation controls, not document bodies or message transcripts.
 
 - `WindowEntry.swift`: search result identity, searchable aliases, display metadata, and recency keys. An adapter destination may own an AX window without being a window result.

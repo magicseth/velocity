@@ -65,14 +65,14 @@ enum BrowserTabs {
         """
     }
 
-    static func select(_ tab: BrowserTab) -> Bool {
+    static func select(_ tab: BrowserTab, requireUnchanged: Bool = false) -> Bool {
         guard supported.contains(tab.browserID) else { return false }
         var error: NSDictionary?
-        let result = NSAppleScript(source: selectionSource(tab))?.executeAndReturnError(&error)
+        let result = NSAppleScript(source: selectionSource(tab, requireUnchanged: requireUnchanged))?.executeAndReturnError(&error)
         return error == nil && result?.booleanValue == true
     }
 
-    static func selectionSource(_ tab: BrowserTab) -> String {
+    static func selectionSource(_ tab: BrowserTab, requireUnchanged: Bool = false) -> String {
         precondition(supported.contains(tab.browserID))
         let source: String
         if tab.browserID == "com.google.Chrome" {
@@ -90,6 +90,7 @@ enum BrowserTabs {
                         set tabIDs to id of every tab of w
                         repeat with n from 1 to count of tabIDs
                             if (item n of tabIDs as integer) is \(tab.tabID) then
+                                \(requireUnchanged ? "if URL of tab n of w is not " + quote(tab.url) + " or title of tab n of w is not " + quote(tab.title) + " then return false" : "")
                                 set minimized of w to false
                                 set active tab index of w to n
                                 set index of w to 1
@@ -148,7 +149,7 @@ enum BrowserTabs {
                     repeat with w in windows
                         repeat with n from 1 to count of tabs of w
                             if (id of tab n of w as integer) is \(tab.tabID) then
-                                if URL of tab n of w is not \(quote(tab.url)) then return false
+                                if URL of tab n of w is not \(quote(tab.url)) or title of tab n of w is not \(quote(tab.title)) then return false
                                 close tab n of w
                                 return true
                             end if

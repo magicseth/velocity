@@ -10,6 +10,9 @@ final class SearchPanel: NSPanel {
 
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let model = PaletteModel()
+    lazy var resourceBroker = makeBroker()
+    lazy var accessServer = AccessServer(broker: resourceBroker)
+    var accessWindow: NSWindow?
     let updater = AppUpdater()
     var status: NSStatusItem!
     var menuBarFallback: MenuBarFallback?
@@ -95,6 +98,7 @@ final class SearchPanel: NSPanel {
             self.status.button?.contentTintColor = count > 0 ? .systemOrange : nil
             self.status.button?.toolTip = issue ?? (count > 0 ? "\(count) agents need your input — click to view" : "Terminal Velocity — \(self.model.shortcut)")
             if let issue { self.model.message = issue }
+            else { self.updateAccessAttention() }
         }
         attentionNotifications.start()
         let menu = NSMenu()
@@ -106,6 +110,12 @@ final class SearchPanel: NSPanel {
             edit.submenu?.addItem(withTitle: title, action: action, keyEquivalent: key)
         }
         menu.addItem(edit)
+        let access = NSMenuItem(title: "Access", action: nil, keyEquivalent: "")
+        access.submenu = NSMenu(title: "Access")
+        let accessSettings = NSMenuItem(title: "Agent Access…", action: #selector(showAgentAccess), keyEquivalent: ",")
+        accessSettings.target = self
+        access.submenu?.addItem(accessSettings)
+        menu.addItem(access)
         NSApp.mainMenu = menu
         installHotkeyHandler()
         registerShortcut((UserDefaults.standard.object(forKey: "shortcut") as? Int) ?? 4)
@@ -268,6 +278,8 @@ final class SearchPanel: NSPanel {
         let menu = NSMenu()
         add("Search Windows…", #selector(openFromMenuBar), to: menu)
         add("Clean Up Tabs…", #selector(showTabCleanup), to: menu)
+        let pending = resourceBroker.requests.filter { $0.status == .pending }.count
+        add(pending > 0 ? "Agent Access (\(pending) requests)…" : "Agent Access…", #selector(showAgentAccess), to: menu)
         if Features.experimentalAgents { add("Switch Objectives…  ⌃⌥O", #selector(switchObjectives), to: menu) }
         add("Attention (\(attentionCount))", #selector(showAttention), to: menu)
         let notifications = NSMenuItem(title: "Agent Notifications", action: #selector(toggleNotifications), keyEquivalent: "")
@@ -446,6 +458,7 @@ final class SearchPanel: NSPanel {
                 guard let self else { return }
                 self.snapshotGeneration += 1
                 self.model.all = snapshot.entries
+                self.resourceBroker.reconcile(snapshot.entries)
                 self.model.cleanup.observe(snapshot.entries)
                 self.model.reconnectGroups()
                 self.model.observeObjectives()

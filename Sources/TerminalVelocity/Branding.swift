@@ -4,18 +4,27 @@ import SwiftUI
 enum Branding {
     static func menuIcon(attention: Bool = false) -> NSImage {
         let image = NSImage(size: NSSize(width: 20, height: 18), flipped: false) { _ in
-            NSColor.black.setFill()
-            let mark = NSBezierPath()
-            for (index, point) in [NSPoint(x: 1, y: 13), NSPoint(x: 4.5, y: 13),
-                                   NSPoint(x: 8, y: 5.5), NSPoint(x: 14, y: 16),
-                                   NSPoint(x: 18, y: 16), NSPoint(x: 9, y: 1),
-                                   NSPoint(x: 7, y: 1)].enumerated() {
-                if index == 0 { mark.move(to: point) } else { mark.line(to: point) }
+            NSColor.black.setStroke()
+            for quarter in 0..<4 {
+                NSGraphicsContext.saveGraphicsState()
+                let rotation = NSAffineTransform()
+                rotation.translateX(by: 9, yBy: 9)
+                rotation.rotate(byDegrees: CGFloat(quarter * 90))
+                rotation.concat()
+                let chamber = NSBezierPath()
+                chamber.move(to: NSPoint(x: -6, y: 2))
+                chamber.line(to: NSPoint(x: -6, y: 4.5))
+                chamber.curve(to: NSPoint(x: -4.5, y: 6), controlPoint1: NSPoint(x: -6, y: 5.5), controlPoint2: NSPoint(x: -5.5, y: 6))
+                chamber.line(to: NSPoint(x: -2, y: 6))
+                chamber.lineWidth = 2
+                chamber.lineCapStyle = .round
+                chamber.stroke()
+                NSGraphicsContext.restoreGraphicsState()
             }
-            mark.close()
-            mark.fill()
+            NSColor.black.setFill()
+            NSBezierPath(roundedRect: NSRect(x: 7, y: 7, width: 4, height: 4), xRadius: 1, yRadius: 1).fill()
             if attention {
-                NSBezierPath(ovalIn: NSRect(x: 15, y: 1, width: 4, height: 4)).fill()
+                NSBezierPath(ovalIn: NSRect(x: 16, y: 0, width: 4, height: 4)).fill()
             }
             return true
         }

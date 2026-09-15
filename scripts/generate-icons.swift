@@ -19,30 +19,35 @@ func icon(_ size: Int) -> NSBitmapImageRep {
     shadow.shadowOffset = NSSize(width: 0, height: -12)
     NSGraphicsContext.saveGraphicsState()
     shadow.set()
-    NSColor(srgbRed: 0.06, green: 0.09, blue: 0.27, alpha: 1).setFill()
+    NSColor(srgbRed: 0.045, green: 0.14, blue: 0.16, alpha: 1).setFill()
     tile.fill()
     NSGraphicsContext.restoreGraphicsState()
-    NSGradient(starting: NSColor(srgbRed: 0.055, green: 0.085, blue: 0.25, alpha: 1),
-               ending: NSColor(srgbRed: 0.20, green: 0.32, blue: 0.82, alpha: 1))!.draw(in: tile, angle: 70)
+    NSGradient(starting: NSColor(srgbRed: 0.035, green: 0.12, blue: 0.15, alpha: 1),
+               ending: NSColor(srgbRed: 0.10, green: 0.32, blue: 0.36, alpha: 1))!.draw(in: tile, angle: 70)
     NSColor.white.withAlphaComponent(0.17).setStroke()
     tile.lineWidth = 3
     tile.stroke()
-    // A single forward-swept V. Broad filled shapes remain legible at 16 pixels.
-    func polygon(_ points: [NSPoint], color: NSColor) {
-        let path = NSBezierPath()
-        path.move(to: points[0])
-        for point in points.dropFirst() { path.line(to: point) }
-        path.close()
-        color.setFill()
-        path.fill()
+    // Four chambers frame a protected resource. The open gaps suggest scoped access.
+    for quarter in 0..<4 {
+        NSGraphicsContext.saveGraphicsState()
+        let rotation = NSAffineTransform()
+        rotation.translateX(by: 512, yBy: 512)
+        rotation.rotate(byDegrees: CGFloat(quarter * 90))
+        rotation.concat()
+        let chamber = NSBezierPath()
+        chamber.move(to: NSPoint(x: -218, y: 60))
+        chamber.line(to: NSPoint(x: -218, y: 164))
+        chamber.curve(to: NSPoint(x: -164, y: 218), controlPoint1: NSPoint(x: -218, y: 202), controlPoint2: NSPoint(x: -202, y: 218))
+        chamber.line(to: NSPoint(x: -85, y: 218))
+        chamber.lineWidth = 86
+        chamber.lineCapStyle = .round
+        chamber.lineJoinStyle = .round
+        NSColor(srgbRed: 0.87, green: 0.96, blue: 0.94, alpha: 1).setStroke()
+        chamber.stroke()
+        NSGraphicsContext.restoreGraphicsState()
     }
-    polygon([NSPoint(x: 220, y: 688), NSPoint(x: 366, y: 688),
-             NSPoint(x: 495, y: 430), NSPoint(x: 690, y: 770),
-             NSPoint(x: 838, y: 770), NSPoint(x: 529, y: 254),
-             NSPoint(x: 439, y: 254)], color: .white)
-    polygon([NSPoint(x: 622, y: 432), NSPoint(x: 725, y: 432),
-             NSPoint(x: 833, y: 614), NSPoint(x: 730, y: 614)],
-            color: NSColor(srgbRed: 0.27, green: 0.94, blue: 0.91, alpha: 1))
+    NSColor(srgbRed: 1, green: 0.73, blue: 0.35, alpha: 1).setFill()
+    NSBezierPath(roundedRect: NSRect(x: 437, y: 437, width: 150, height: 150), xRadius: 42, yRadius: 42).fill()
     NSGraphicsContext.restoreGraphicsState()
     return bitmap
 }
