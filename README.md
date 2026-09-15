@@ -46,7 +46,7 @@ On first launch, enable **Terminal Velocity** in **System Settings → Privacy &
 
 ## Use
 
-- **Command–Shift–A** or click the menu-bar icon: open / dismiss search. This is a global shortcut and takes priority over Chrome’s tab search while Velocity runs. Existing installations keep their chosen shortcut; change it from the menu-bar menu.
+- **Command–Shift–A** to open / dismiss search. Click the menu-bar icon for search and settings. This is a global shortcut and takes priority over Chrome’s tab search while Velocity runs. Existing installations keep their chosen shortcut; change it from the menu-bar menu.
 - Installed apps in `/Applications`, `/System/Applications`, and `~/Applications` are searchable even when closed. Choose a **Launch app** result to open it.
 - Type any part of an app name, window title, URL, or exposed document path. Project and folder names in those fields work too; document contents are not indexed.
 - Use `@AppName` or `app:"Visual Studio Code"` for any app, and `folder:"My Projects"` for document parent folders. Folder metadata depends on the app exposing its document URL; inactive tabs never inherit the selected document’s path.
@@ -57,7 +57,7 @@ On first launch, enable **Terminal Velocity** in **System Settings → Privacy &
 - **↑ / ↓** select a result; **Return** focuses it; **Escape** returns to your previous app.
 - Click **×** beside a result to close that tab or window, or quit an app-only result. Native save/process prompts remain in the owning app. Launchable apps and saved chat projects have no close button.
 - **Command–R** refreshes the list.
-- Right-click the menu-bar icon to change the shortcut or quit.
+- Click the menu-bar icon to change the shortcut or quit.
 
 The list includes windows exposed by each app’s Accessibility implementation, including minimized and hidden windows, plus named tab controls exposed in window chrome. Tab results bring the containing window forward, then select the requested tab. Apps with no exposed windows appear as application results. Apps that do not expose accessible tab controls cannot have their inactive tabs indexed this way. Full-screen windows and other Spaces are subject to macOS and the target app’s window-switching behavior.
 
@@ -111,7 +111,7 @@ Objectives, window grouping, AI grouping, and title-derived agent synopses are d
 
 ### Menu bar placement
 
-Velocity keeps its icon a fixed width, including when agents need attention. Hold **Command** and drag the icon nearer the clock to keep it away from the notch; macOS saves its placement. Left-click opens search; right-click opens settings. **Command–Shift–A** opens Velocity even when the menu bar is crowded.
+Velocity automatically checks whether its menu-bar icon is visible and clear of the notch. If the icon is hidden, clipped, or offscreen, a small **Velocity** button appears below the menu bar in the screen’s safe area. It disappears after the normal icon becomes accessible again. Click either button to open the same menu, including search, settings, updates, and quit. **Command–Shift–A** still opens search directly. This fallback keeps Velocity accessible; it does not rearrange other apps’ menu-bar items.
 
 ### Native tab cleanup
 

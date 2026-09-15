@@ -12,6 +12,7 @@ final class SearchPanel: NSPanel {
     let model = PaletteModel()
     let updater = AppUpdater()
     var status: NSStatusItem!
+    var menuBarFallback: MenuBarFallback?
     var panel: SearchPanel!
     var hotKey: EventHotKeyRef?
     var objectiveHotKey: EventHotKeyRef?
@@ -81,6 +82,8 @@ final class SearchPanel: NSPanel {
         status.button?.action = #selector(statusClicked)
         status.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         status.button?.toolTip = "Terminal Velocity — search windows"
+        menuBarFallback = MenuBarFallback(status: status)
+        menuBarFallback?.menu = { [weak self] in self?.statusMenu() ?? NSMenu() }
         attentionNotifications.openAttention = { [weak self] in self?.showAttention() }
         attentionNotifications.changed = { [weak self] count, issue in
             guard let self else { return }
@@ -261,39 +264,39 @@ final class SearchPanel: NSPanel {
 
     @objc func showTabCleanup() { show(); model.showCleanup = true }
 
+    func statusMenu() -> NSMenu {
+        let menu = NSMenu()
+        add("Search Windows…", #selector(openFromMenuBar), to: menu)
+        add("Clean Up Tabs…", #selector(showTabCleanup), to: menu)
+        if Features.experimentalAgents { add("Switch Objectives…  ⌃⌥O", #selector(switchObjectives), to: menu) }
+        add("Attention (\(attentionCount))", #selector(showAttention), to: menu)
+        let notifications = NSMenuItem(title: "Agent Notifications", action: #selector(toggleNotifications), keyEquivalent: "")
+        notifications.target = self; notifications.state = attentionNotifications.enabled ? .on : .off
+        menu.addItem(notifications)
+        add("Test Notification", #selector(testNotification), to: menu)
+        add("Notification Settings…", #selector(notificationSettings), to: menu)
+        if Features.experimentalAgents { add("Restore Other Windows", #selector(restoreWindows), to: menu) }
+        let shortcut = NSMenuItem(title: "Keyboard Shortcut", action: nil, keyEquivalent: "")
+        let choices = NSMenu()
+        for (index, value) in shortcuts.enumerated() {
+            let item = NSMenuItem(title: value.0, action: #selector(changeShortcut(_:)), keyEquivalent: "")
+            item.target = self; item.tag = index
+            item.state = index == UserDefaults.standard.integer(forKey: "shortcut") ? .on : .off
+            choices.addItem(item)
+        }
+        shortcut.submenu = choices; menu.addItem(shortcut)
+        add("Accessibility Settings…", #selector(accessibility), to: menu)
+        add("Enable Chrome & Safari Tabs…", #selector(enableBrowserTabs), to: menu)
+        menu.addItem(.separator())
+        add("Check for Updates…", #selector(checkForUpdates), to: menu)
+        add("Quit Terminal Velocity", #selector(quit), to: menu)
+        return menu
+    }
+
     @objc func statusClicked() {
-        if NSApp.currentEvent?.type == .rightMouseUp {
-            let menu = NSMenu()
-            add("Search Windows…", #selector(openFromMenuBar), to: menu)
-            add("Clean Up Tabs…", #selector(showTabCleanup), to: menu)
-            if Features.experimentalAgents { add("Switch Objectives…  ⌃⌥O", #selector(switchObjectives), to: menu) }
-            add("Attention (\(attentionCount))", #selector(showAttention), to: menu)
-            let notifications = NSMenuItem(title: "Agent Notifications", action: #selector(toggleNotifications), keyEquivalent: "")
-            notifications.target = self; notifications.state = attentionNotifications.enabled ? .on : .off
-            menu.addItem(notifications)
-            add("Test Notification", #selector(testNotification), to: menu)
-            add("Notification Settings…", #selector(notificationSettings), to: menu)
-            if Features.experimentalAgents { add("Restore Other Windows", #selector(restoreWindows), to: menu) }
-            let shortcut = NSMenuItem(title: "Keyboard Shortcut", action: nil, keyEquivalent: "")
-            let choices = NSMenu()
-            for (index, value) in shortcuts.enumerated() {
-                let item = NSMenuItem(title: value.0, action: #selector(changeShortcut(_:)), keyEquivalent: "")
-                item.target = self; item.tag = index
-                item.state = index == UserDefaults.standard.integer(forKey: "shortcut") ? .on : .off
-                choices.addItem(item)
-            }
-            shortcut.submenu = choices; menu.addItem(shortcut)
-            add("Accessibility Settings…", #selector(accessibility), to: menu)
-            add("Enable Chrome & Safari Tabs…", #selector(enableBrowserTabs), to: menu)
-            menu.addItem(.separator())
-            add("Check for Updates…", #selector(checkForUpdates), to: menu)
-            add("Quit Terminal Velocity", #selector(quit), to: menu)
-            // Present directly without temporarily replacing the status item's
-            // menu/action routing, which can interfere with subsequent clicks.
-            if let button = status.button {
-                menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.minY), in: button)
-            }
-        } else { openFromMenuBar() }
+        if let button = status.button {
+            statusMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.minY), in: button)
+        }
     }
 
     @objc func openFromMenuBar() {
