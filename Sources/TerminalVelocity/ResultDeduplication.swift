@@ -12,7 +12,12 @@ enum ResultDeduplication {
             return tabs.contains { tab in
                 guard tab.windowKey == key else { return false }
                 if tab.attention.needsAttention && tab.attentionTaskTitle == entry.attentionTaskTitle { return true }
-                return tab.terminal && entry.terminal && terminalTitle(tab.title) == terminalTitle(entry.title)
+                guard tab.terminal && entry.terminal else { return false }
+                if terminalTitle(tab.title) == terminalTitle(entry.title) { return true }
+                // Window titles add folder/process details that the displayed task
+                // label omits. Use the same parser, only within this owning window.
+                guard let task = entry.agentTaskTitle, let tabTask = tab.agentTaskTitle else { return false }
+                return task == tabTask
             }
         }
         nextResults = removingBrowserWindowDuplicates(nextResults)

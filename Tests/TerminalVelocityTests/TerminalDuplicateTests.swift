@@ -3,6 +3,35 @@ import ApplicationServices
 @testable import TerminalVelocity
 
 final class TerminalDuplicateTests: XCTestCase {
+    @MainActor func testAgentTaskTitleDeduplicatesDifferentWindowAndTabDecorations() {
+        let parent = AXUIElementCreateApplication(501)
+        let window = WindowEntry(id: "window", pid: 501, appName: "Terminal",
+                                 title: "waveshare — ✳ Waveshare touch LCD car game — node ◂ claude --resume — 120×40",
+                                 icon: nil, element: parent, minimized: false, hidden: false, terminal: true)
+        let tab = WindowEntry(id: "tab", pid: 501, appName: "Terminal",
+                              title: "~/Projects/waveshare — ◐ Waveshare touch LCD car game ◂ claude --resume",
+                              icon: nil, element: parent, minimized: false, hidden: false, terminal: true,
+                              tab: AXUIElementCreateApplication(502))
+        let separate = WindowEntry(id: "separate", pid: 501, appName: "Terminal", title: window.title,
+                                   icon: nil, element: AXUIElementCreateApplication(503), minimized: false, hidden: false, terminal: true)
+        var differentTask = tab
+        differentTask.title = "✳ Another task ◂ claude --resume"
+        XCTAssertEqual(window.agentTaskTitle, "Waveshare touch LCD car game")
+        XCTAssertEqual(window.agentTaskTitle, tab.agentTaskTitle)
+        let model = PaletteModel()
+        model.all = [window, tab, separate]
+        model.query = "waveshare"
+        XCTAssertEqual(Set(model.results.map(\.id)), ["tab", "separate"])
+        model.query = "@windows waveshare"
+        XCTAssertEqual(Set(model.results.map(\.id)), ["window", "separate"])
+        model.all = [window, differentTask]
+        model.query = ""
+        XCTAssertEqual(Set(model.results.map(\.id)), ["window", "tab"])
+        model.all = [window, tab]
+        model.query = "node"
+        XCTAssertEqual(model.results.map(\.id), ["window"])
+    }
+
     @MainActor func testOrdinaryMinimizedTerminalWindowYieldsToItsMatchingTabOnly() {
         let window = AXUIElementCreateApplication(4001)
         func entry(_ id: String, title: String, element: AXUIElement, tab: Bool) -> WindowEntry {

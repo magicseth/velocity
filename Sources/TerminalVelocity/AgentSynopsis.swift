@@ -10,8 +10,12 @@ extension WindowEntry {
     }
 
     #if VELOCITY_EXPERIMENTAL
-    /// A title-derived task label, not a generated AI summary or terminal-content scan.
-    var agentSynopsis: String? {
+    var agentSynopsis: String? { agentTaskTitle }
+    #endif
+
+    /// Shared by presentation and duplicate detection in both build variants.
+    /// Derived only from agent title markers, never from generated summaries.
+    var agentTaskTitle: String? {
         guard terminal, attention != .none else { return nil }
         var task = title
         if let marker = task.range(of: #"\[\s*[!.]\s*\]\s+Action Required\s*\|?\s*|[✳◐◑]\s+"#, options: .regularExpression) {
@@ -22,5 +26,4 @@ extension WindowEntry {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return task.isEmpty ? nil : task
     }
-    #endif
 }
