@@ -123,3 +123,9 @@ Choose **Clean up tabs** in Velocity or **Clean Up Tabs…** in its menu. It use
 - **Recently closed** retains the last 100 cleanup URLs locally for reopening. This restores the URL, not unsaved page state or the original browser profile. Activity records store hashed identifiers and timestamps locally. No tab metadata is sent to AI.
 
 Cleanup does not move tabs or create browser tab groups.
+
+### Conductor workspaces
+
+Velocity searches workspace links exposed in Conductor’s sidebar. Search by workspace name or `Conductor`, then press Enter to open the exact workspace. Duplicate names are distinguished internally by workspace ID. Keep the sidebar open and expand a repository to expose its workspaces; collapsed or hidden entries are not indexed yet. No Conductor API token or extension is needed, and conversation contents are not indexed.
+
+Open windows, tabs, and workspaces sort ahead of applications that need launching, including when searching by name.

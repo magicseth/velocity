@@ -19,6 +19,21 @@ final class BrowserDuplicateTests: XCTestCase {
         XCTAssertEqual(result.first?.audio, .playing)
         XCTAssertEqual(WindowCatalog.removingBrowserWindowDuplicates([parent]).map(\.id), ["window"], "Explicit window searches and unavailable tabs must retain the window")
     }
+    func testAudioWindowAndTabDeduplicateEvenWhenPlayerTitleDiffers() {
+        let element = AXUIElementCreateApplication(1100)
+        let window = WindowEntry(id: "window", pid: 1100, appName: "Chrome", title: "Song name", icon: nil,
+                                 element: element, minimized: false, hidden: false, terminal: false, audio: .playing, browser: true)
+        let tab = WindowEntry(id: "tab", pid: 1100, appName: "Chrome", title: "YouTube Music", icon: nil,
+                              element: element, minimized: false, hidden: false, terminal: false,
+                              tab: AXUIElementCreateApplication(1101), audio: .playing, browser: true)
+        XCTAssertEqual(WindowCatalog.removingBrowserWindowDuplicates([window, tab]).map(\.id), ["tab"])
+        var different = tab
+        different = WindowEntry(id: "other", pid: 1102, appName: "Chrome", title: "YouTube Music", icon: nil,
+                                element: AXUIElementCreateApplication(1102), minimized: false, hidden: false, terminal: false,
+                                tab: AXUIElementCreateApplication(1103), audio: .playing, browser: true)
+        XCTAssertEqual(WindowCatalog.removingBrowserWindowDuplicates([window, different]).count, 2)
+    }
+
     func testNormalizationUsesTheActualAppNameAndPreservesDifferentTitles() {
         XCTAssertEqual(WindowCatalog.browserWindowTitle("Page - Audio playing - Browser X - Work", appName: "Browser X"), "Page")
         XCTAssertEqual(WindowCatalog.browserWindowTitle("Page about Browser X", appName: "Browser X"), "Page about Browser X")

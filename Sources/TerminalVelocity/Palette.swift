@@ -147,6 +147,9 @@ struct SearchResults {
             let rank = parsed.text.isEmpty && key == memory.currentKey ? 0.5 : recent
             return (score, rank == 0 && entry.launchURL != nil ? -1 : rank, index, entry)
         }.sorted {
+            if ($0.3.launchURL != nil) != ($1.3.launchURL != nil) {
+                return $0.3.launchURL == nil
+            }
             if parsed.text.isEmpty {
                 let first = $0.3.attention.needsAttention ? 2 : ($0.3.audio != .none ? 1 : 0)
                 let second = $1.3.attention.needsAttention ? 2 : ($1.3.audio != .none ? 1 : 0)

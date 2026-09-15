@@ -191,7 +191,7 @@ final class SearchPanel: NSPanel {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let installed = WindowCatalog.installedApps()
             DispatchQueue.main.async {
-                guard let self, self.model.all.isEmpty else { return }
+                guard let self, self.model.all.isEmpty, !self.scanning else { return }
                 self.model.all = installed
                 self.model.filter()
             }
@@ -377,7 +377,11 @@ final class SearchPanel: NSPanel {
             guard NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid else { return false }
             let selectedTab: Bool
             if let project = entry.chatProject, let window = entry.element {
-                selectedTab = await ChatProjects.select(project, window: window)
+                if project.mode == "Workspace" {
+                    selectedTab = ConductorWorkspaces.select(project, window: window)
+                } else {
+                    selectedTab = await ChatProjects.select(project, window: window)
+                }
             } else {
                 selectedTab = await WindowCatalog.selectFocusedTab(entry)
             }

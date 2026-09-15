@@ -60,7 +60,7 @@ struct WindowEntry: Identifiable, @unchecked Sendable {
     }
     var isTab: Bool { tab != nil || browserTab != nil }
     var subtitle: String {
-        if let chatProject { return appName + " · Project · " + chatProject.mode }
+        if let chatProject { return appName + (chatProject.mode == "Workspace" ? " · Workspace" : " · Project · " + chatProject.mode) }
         if launchURL != nil { return "Launch app" }
         var parts = [appName, isTab ? "Tab" : element == nil ? "Application" : "Window"]
         if let browserProfile { parts.append(browserProfile) }
@@ -252,6 +252,7 @@ enum WindowCatalog {
                     audio: audioPIDs.contains(pid) ? .appOutput : .none, browser: browser,
                     documentPath: documentPath(window), browserProfile: browser ? profileName(windowTitle: title, appName: name) : nil))
                 appEntries.append(contentsOf: ChatProjects.scan(window: window, app: app))
+                appEntries.append(contentsOf: ConductorWorkspaces.scan(window: window, app: app))
                 for tab in tabs(in: window) {
                     appEntries.append(WindowEntry(id: "\(pid):window:\(CFHash(window)):tab:\(CFHash(tab.0))", pid: pid,
                         appName: name, title: tab.1, icon: app.icon, element: window,
@@ -352,7 +353,11 @@ enum WindowCatalog {
         return entries.filter { window in
             guard window.browser, !window.isTab, let key = window.windowKey else { return true }
             return !tabs.contains { tab in
-                tab.windowKey == key && browserWindowTitle(window.title, appName: window.appName) == browserWindowTitle(tab.title, appName: tab.appName)
+                tab.windowKey == key && (
+                    tab.browserTab?.isActive == true ||
+                    (window.audio == .playing && tab.audio == .playing) ||
+                    browserWindowTitle(window.title, appName: window.appName) == browserWindowTitle(tab.title, appName: tab.appName)
+                )
             }
         }
     }
