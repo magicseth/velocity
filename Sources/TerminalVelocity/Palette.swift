@@ -160,16 +160,25 @@ struct SearchResults {
             return $0.2 < $1.2
         }.map { $0.3 }
         do {
-            let tabs = nextResults.filter { $0.isTab && $0.attention.needsAttention }
+            let tabs = nextResults.filter { $0.isTab && ($0.terminal || $0.attention.needsAttention) }
             nextResults.removeAll { entry in
                 guard !entry.isTab, let key = entry.windowKey else { return false }
-                return tabs.contains { $0.windowKey == key && $0.attentionTaskTitle == entry.attentionTaskTitle }
+                return tabs.contains { tab in
+                    guard tab.windowKey == key else { return false }
+                    if tab.attention.needsAttention && tab.attentionTaskTitle == entry.attentionTaskTitle { return true }
+                    return tab.terminal && entry.terminal && Self.terminalTitle(tab.title) == Self.terminalTitle(entry.title)
+                }
             }
         }
         nextResults = WindowCatalog.removingBrowserWindowDuplicates(nextResults)
         // Publish rows and selection together. A vanished selection must not silently
         // become a different app occupying the same row after a background scan.
         resultState = SearchResults(entries: nextResults, selectedID: selectedID ?? nextResults.first?.id)
+    }
+
+    static func terminalTitle(_ title: String) -> String {
+        title.replacingOccurrences(of: #"\s+—\s+\d+[×x]\d+\s*$"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func move(_ delta: Int) {
