@@ -15,7 +15,7 @@ Velocity discovers open Chrome and Safari tabs, accessible terminal tabs and app
 
 Native macOS menu-bar app. macOS 14+. The public build runs locally and makes no AI requests.
 
-[**Download Velocity**](https://github.com/magicseth/velocity/releases/tag/v0.1.11)
+[**Download Velocity**](https://github.com/magicseth/velocity/releases/tag/v0.1.13)
 
 ![Velocity window search, with agent attention first and playing audio next](docs/screenshots/window-switcher.png)
 
@@ -29,7 +29,7 @@ The release is Developer ID signed but **not notarized**. macOS may require appr
 
 ## Updates
 
-Right-click Velocity’s menu-bar icon and choose **Check for Updates…**. If a newer version is available, choose **Download & Restart**. Velocity checks GitHub, verifies the download checksum and Developer ID signature, installs in place, and restarts with your settings intact. Keep the app in a writable folder, such as your Applications folder.
+Click Velocity’s menu-bar icon and choose **Check for Updates…**. If a newer version is available, choose **Download & Restart**. Velocity checks GitHub, verifies the download checksum and Developer ID signature, installs in place, and restarts with your settings intact. Keep the app in a writable folder, such as your Applications folder.
 
 Public builds update to public builds; experimental builds update to the separate `-experimental.zip` asset. The standard download keeps objectives and synopses disabled. Versions before 0.1.5 need one manual download to gain the updater. Updates are checked only when you ask; no window titles or conversation data are sent to GitHub.
 
@@ -135,3 +135,7 @@ Open windows, tabs, and workspaces sort ahead of applications that need launchin
 Search recipient or group names from Messages, and channel or DM names from Slack, then press Enter to open the sidebar destination. Uses existing Accessibility permission—no extension, Slack token, or additional account connection. Conversation results cannot be closed with the row’s close action.
 
 This indexes the navigation entries currently exposed by each app, not its full history or directory. Keep the sidebar open and expand Slack sections; only the active Slack workspace is scanned. Hidden or unloaded conversations are not indexed. Messages labels are shortened before the first comma to exclude message previews; names containing commas may be shortened. Ambiguous duplicate names are omitted. Names stay in the local search index; message bodies are not indexed or uploaded.
+
+### Local agent access
+
+The optional **Agent Access…** panel provides project-scoped resource discovery, approval requests for supported open/close actions, expiring grants, revocation, and a local audit log. Access starts off and resources start private. See the [setup, API, and security boundaries](docs/agent-access.md).
