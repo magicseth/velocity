@@ -4,7 +4,7 @@
 
 You know Chrome’s tab search: press a shortcut, type a few words, and jump straight to the tab. Velocity brings that experience across your browser tabs, terminal sessions, app windows, and open AI conversations.
 
-Press **Option–Shift–A**, type what you’re looking for, and hit **Return**. One search box. One list. The agent waiting for your answer, the ChatGPT conversation open in a browser tab, the Claude session in a terminal, the document you were editing—all within reach.
+Press **Command–Shift–A**, type what you’re looking for, and hit **Return**. One search box. One list. The agent waiting for your answer, the ChatGPT conversation open in a browser tab, the Claude session in a terminal, the document you were editing—all within reach.
 
 - **Find work across apps.** Search titles, browser URLs, app names, and exposed project or document paths.
 - **See which agents need you.** Recognized input requests rise to the top, with optional notifications.
@@ -46,7 +46,7 @@ On first launch, enable **Terminal Velocity** in **System Settings → Privacy &
 
 ## Use
 
-- **Option–Shift–A** or click the menu-bar icon: open / dismiss search. Existing installations keep their chosen shortcut; change it from the menu-bar menu.
+- **Command–Shift–A** or click the menu-bar icon: open / dismiss search. This is a global shortcut and takes priority over Chrome’s tab search while Velocity runs. Existing installations keep their chosen shortcut; change it from the menu-bar menu.
 - Installed apps in `/Applications`, `/System/Applications`, and `~/Applications` are searchable even when closed. Choose a **Launch app** result to open it.
 - Type any part of an app name, window title, URL, or exposed document path. Project and folder names in those fields work too; document contents are not indexed.
 - Use `@AppName` or `app:"Visual Studio Code"` for any app, and `folder:"My Projects"` for document parent folders. Folder metadata depends on the app exposing its document URL; inactive tabs never inherit the selected document’s path.
@@ -111,7 +111,7 @@ Objectives, window grouping, AI grouping, and title-derived agent synopses are d
 
 ### Menu bar placement
 
-Velocity keeps its icon a fixed width, including when agents need attention. Hold **Command** and drag the icon nearer the clock to keep it away from the notch; macOS saves its placement. Left-click opens search; right-click opens settings. **Option–Shift–A** opens Velocity even when the menu bar is crowded.
+Velocity keeps its icon a fixed width, including when agents need attention. Hold **Command** and drag the icon nearer the clock to keep it away from the notch; macOS saves its placement. Left-click opens search; right-click opens settings. **Command–Shift–A** opens Velocity even when the menu bar is crowded.
 
 ### Native tab cleanup
 

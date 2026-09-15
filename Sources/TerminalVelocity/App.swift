@@ -41,7 +41,8 @@ final class SearchPanel: NSPanel {
         ("⌃⌥K", UInt32(controlKey | optionKey), UInt32(kVK_ANSI_K)),
         ("⌘⇧K", UInt32(cmdKey | shiftKey), UInt32(kVK_ANSI_K)),
         ("⌃⌘K", UInt32(controlKey | cmdKey), UInt32(kVK_ANSI_K)),
-        ("⌥⇧A", UInt32(optionKey | shiftKey), UInt32(kVK_ANSI_A))
+        ("⌥⇧A", UInt32(optionKey | shiftKey), UInt32(kVK_ANSI_A)),
+        ("⌘⇧A", UInt32(cmdKey | shiftKey), UInt32(kVK_ANSI_A))
     ]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -104,7 +105,7 @@ final class SearchPanel: NSPanel {
         menu.addItem(edit)
         NSApp.mainMenu = menu
         installHotkeyHandler()
-        registerShortcut((UserDefaults.standard.object(forKey: "shortcut") as? Int) ?? 3)
+        registerShortcut((UserDefaults.standard.object(forKey: "shortcut") as? Int) ?? 4)
         if Features.experimentalAgents && RegisterEventHotKey(UInt32(kVK_ANSI_O), UInt32(controlKey | optionKey),
             EventHotKeyID(signature: 0x54564C43, id: 2), GetApplicationEventTarget(), 0, &objectiveHotKey) != noErr {
             model.message = "Objective shortcut unavailable. Use the menu-bar menu."
@@ -243,7 +244,7 @@ final class SearchPanel: NSPanel {
     }
 
     func registerShortcut(_ requested: Int) {
-        let index = shortcuts.indices.contains(requested) ? requested : 3
+        let index = shortcuts.indices.contains(requested) ? requested : 4
         var replacement: EventHotKeyRef?
         let result = RegisterEventHotKey(shortcuts[index].2, shortcuts[index].1,
                                         EventHotKeyID(signature: 0x54564C43, id: 1), GetApplicationEventTarget(), 0, &replacement)

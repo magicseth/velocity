@@ -127,7 +127,7 @@ struct SearchResults {
     var closeEntry: ((WindowEntry) -> Void)?
     @Published var closingEntries: Set<String> = []
     var refresh: (() -> Void)?
-    var shortcut = "⌥⇧A"
+    var shortcut = "⌘⇧A"
 
     func openAllApps() {
         query = ""
