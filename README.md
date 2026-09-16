@@ -15,7 +15,7 @@ Velocity discovers open Chrome and Safari tabs, accessible terminal tabs and app
 
 Native macOS menu-bar app. macOS 14+. The public build runs locally and makes no AI requests.
 
-[**Download Velocity**](https://github.com/magicseth/velocity/releases/tag/v0.1.13)
+[**Download Velocity**](https://github.com/magicseth/velocity/releases/tag/v0.1.14)
 
 ![Velocity window search, with agent attention first and playing audio next](docs/screenshots/window-switcher.png)
 
@@ -23,7 +23,7 @@ Native macOS menu-bar app. macOS 14+. The public build runs locally and makes no
 
 ## Onboarding preview
 
-Try Velocity before granting permissions. The upcoming onboarding includes a hands-on demo with fictional browser tabs, terminals, Messages conversations, Slack channels, and workspaces. Search **atlas** to find related work across apps, then choose a result with the keyboard or mouse.
+Try Velocity before granting permissions. The onboarding includes a hands-on demo with fictional browser tabs, terminals, Messages conversations, Slack channels, and workspaces. Search **atlas** to find related work across apps, then choose a result with the keyboard or mouse.
 
 ![Interactive Velocity demo showing a Chrome tab, Terminal tab, Messages conversation, and Slack channel](docs/screenshots/onboarding-demo.png)
 
@@ -35,7 +35,7 @@ Try Velocity before granting permissions. The upcoming onboarding includes a han
 <tr><td><strong>Learn by doing.</strong> Search, choose, and return to your work.</td><td><strong>Make it yours.</strong> Choose a shortcut that fits your Mac.</td></tr>
 </table>
 
-*Rendered from the native SwiftUI onboarding with fictional sample data. This previews the upcoming onboarding; the v0.1.13 download above does not include this flow yet.*
+*Rendered from the native SwiftUI onboarding with fictional sample data. Included in the v0.1.14 downloads.*
 
 ## Download
 
