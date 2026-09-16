@@ -17,11 +17,19 @@ case "${VELOCITY_EXPERIMENTAL:-0}" in
 esac
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/TerminalVelocity "$APP/Contents/MacOS/TerminalVelocity"
-cp resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+node scripts/directory-inspector.verify.ts
+cp resources/directory-inspector.py "$APP/Contents/Resources/directory-inspector.py"
+# Give changed artwork a new resource URL so macOS does not reuse the old icon.
+ICON_HASH="$(shasum -a 256 resources/AppIcon.icns | cut -c 1-16)"
+ICON_NAME="AppIcon-$ICON_HASH"
+cp resources/AppIcon.icns "$APP/Contents/Resources/$ICON_NAME.icns"
 cp resources/Info.plist "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleIconFile $ICON_NAME" "$APP/Contents/Info.plist"
 if [[ "${VELOCITY_EXPERIMENTAL:-0}" == 1 ]]; then
     /usr/libexec/PlistBuddy -c "Set :VelocityExperimental true" "$APP/Contents/Info.plist"
 fi
 codesign --force --options runtime --timestamp=none --entitlements resources/entitlements.plist --sign "$IDENTITY" "$APP"
 codesign --verify --strict "$APP"
+# Refresh this bundle only; do not reset the user's Launch Services database.
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP"
 echo "Built: $APP"

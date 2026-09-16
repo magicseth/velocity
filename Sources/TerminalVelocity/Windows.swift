@@ -4,6 +4,7 @@ import ApplicationServices
 struct WindowSnapshot: @unchecked Sendable {
     var entries: [WindowEntry]
     var notices: [String]
+    var completeBrowsers: Set<String> = []
 }
 
 enum WindowCatalog {
@@ -81,6 +82,18 @@ enum WindowCatalog {
     }
 
     // Observe only the foreground window and known tab controls, without a full scan.
+    static func notificationPreview(_ entry: WindowEntry) -> String? {
+        guard let window = entry.element else { return nil }
+        // Reading a background tab's owning window would read a different agent.
+        if let tab = entry.tab, tabIsSelected(tab) != true { return nil }
+        let title = Accessibility.string(window, kAXTitleAttribute)
+        if entry.tab == nil, title != entry.title { return nil }
+        let text = promptPreview(entry)
+        guard Accessibility.string(window, kAXTitleAttribute) == title else { return nil }
+        if let tab = entry.tab, tabIsSelected(tab) != true { return nil }
+        return AttentionPresentation.excerpt(text)
+    }
+
     static func promptPreview(_ entry: WindowEntry) -> String {
         guard entry.terminal, let window = entry.element else { return "No accessible terminal text is available." }
         if let tab = entry.tab {
@@ -89,8 +102,9 @@ enum WindowCatalog {
             guard selected else { return "This tab is in the background. Open it to read its current prompt." }
         }
         var remaining = 400
+        let deadline = Date().addingTimeInterval(1)
         func read(_ node: AXUIElement, depth: Int) -> String? {
-            guard remaining > 0, depth < 12 else { return nil }
+            guard remaining > 0, depth < 12, Date() < deadline else { return nil }
             remaining -= 1
             AXUIElementSetMessagingTimeout(node, 0.1)
             let role = Accessibility.attribute(node, kAXRoleAttribute) as? String
@@ -156,6 +170,7 @@ enum WindowCatalog {
         }
         var entries: [WindowEntry] = []
         var notices: [String] = []
+        var completeBrowsers: Set<String> = []
         for app in apps {
             let pid = app.processIdentifier
             let name = app.localizedName ?? "Application"
@@ -182,13 +197,15 @@ enum WindowCatalog {
                         appName: name, title: tab.1, icon: app.icon, element: window,
                         minimized: minimized, hidden: app.isHidden, terminal: terminal, tab: tab.0,
                         audio: browser ? tabAudio(tab.0) : (audioPIDs.contains(pid) ? .appOutput : .none), browser: browser,
-                        documentPath: documentPath(tab.0), browserProfile: browser ? profileName(windowTitle: title, appName: name) : nil))
+                        documentPath: documentPath(tab.0), browserProfile: browser ? profileName(windowTitle: title, appName: name) : nil,
+                        representedWindowTitle: terminal && tabIsSelected(tab.0) == true && !title.isEmpty ? title : nil))
                 }
             }
             if browser && browserTabsEnabled {
                 let result = BrowserTabs.scan(browserID: app.bundleIdentifier!)
                 if let error = result.error { notices.append(error) }
                 else {
+                    completeBrowsers.insert(app.bundleIdentifier!)
                     let accessibleTabs = appEntries.filter { $0.tab != nil }
                     appEntries.removeAll { $0.tab != nil }
                     let windowAssociations = browserWindowAssociations(windows: appEntries.filter { !$0.isTab && $0.element != nil }, accessibleTabs: accessibleTabs, scriptTabs: result.tabs, appName: name)
@@ -233,7 +250,7 @@ enum WindowCatalog {
             }
             entries.append(contentsOf: appEntries)
         }
-        return WindowSnapshot(entries: applyingBrowserAudio(entries) + installedApps(), notices: notices)
+        return WindowSnapshot(entries: applyingBrowserAudio(entries) + installedApps(), notices: notices, completeBrowsers: completeBrowsers)
     }
 
     static func browserTitleWithoutAppSuffix(_ title: String, appName: String) -> String {

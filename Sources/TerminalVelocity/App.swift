@@ -9,10 +9,15 @@ final class SearchPanel: NSPanel {
 }
 
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
-    let model = PaletteModel()
+    let model = PaletteModel(closedTabs: ClosedTabs())
     lazy var resourceBroker = makeBroker()
     lazy var accessServer = AccessServer(broker: resourceBroker)
+    var onboardingWindow: NSWindow?
+    var libraryWindow: NSWindow?
+    lazy var resourceLibrary = ResourceLibrary(file: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Velocity/Library/projects.json"))
     var accessWindow: NSWindow?
+    var textRequestWindow: NSWindow?
+    var textRequestModel: TextRequestModel?
     let updater = AppUpdater()
     var status: NSStatusItem!
     var menuBarFallback: MenuBarFallback?
@@ -46,7 +51,8 @@ final class SearchPanel: NSPanel {
         ("⌘⇧K", UInt32(cmdKey | shiftKey), UInt32(kVK_ANSI_K)),
         ("⌃⌘K", UInt32(controlKey | cmdKey), UInt32(kVK_ANSI_K)),
         ("⌥⇧A", UInt32(optionKey | shiftKey), UInt32(kVK_ANSI_A)),
-        ("⌘⇧A", UInt32(cmdKey | shiftKey), UInt32(kVK_ANSI_A))
+        ("⌘⇧A", UInt32(cmdKey | shiftKey), UInt32(kVK_ANSI_A)),
+        ("⌥ Space", UInt32(optionKey), UInt32(kVK_Space))
     ]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -55,6 +61,7 @@ final class SearchPanel: NSPanel {
             if let endpoint = try AIGrouping.importConfiguration(arguments: CommandLine.arguments) { model.aiEndpoint = endpoint }
         } catch { model.message = "AI grouping setup failed: " + error.localizedDescription }
         }
+        bootstrapDirectoryReader()
         NSApp.setActivationPolicy(.accessory)
         panel = SearchPanel(contentRect: NSRect(x: 0, y: 0, width: 680, height: 510),
                             styleMask: [.titled, .fullSizeContentView], backing: .buffered, defer: false)
@@ -88,6 +95,37 @@ final class SearchPanel: NSPanel {
         menuBarFallback = MenuBarFallback(status: status)
         menuBarFallback?.menu = { [weak self] in self?.statusMenu() ?? NSMenu() }
         attentionNotifications.openAttention = { [weak self] in self?.showAttention() }
+        attentionNotifications.openEntry = { [weak self] entry in
+            guard let self else { return }
+            // A notification click activates Velocity asynchronously. Finish that
+            // handoff before yielding to Terminal, or macOS can steal focus back.
+            NSApp.activate()
+            Task { @MainActor in
+                for _ in 0..<20 {
+                    if NSApp.isActive { break }
+                    try? await Task.sleep(for: .milliseconds(25))
+                }
+                self.choose(entry)
+            }
+        }
+        attentionNotifications.answerEntry = { [weak self] entry, approval in
+            guard let self else { return }
+            NSApp.activate()
+            Task { @MainActor in
+                for _ in 0..<20 {
+                    if NSApp.isActive { break }
+                    try? await Task.sleep(for: .milliseconds(25))
+                }
+                guard await self.focusGroup([], selected: entry) else {
+                    self.model.message = "Couldn’t reach the terminal. No answer was sent."
+                    self.showAttention(); return
+                }
+                self.panel.orderOut(nil)
+                if !AttentionAnswer.send(approval, to: entry) {
+                    self.model.message = "The prompt changed or expired. No answer was sent; review it in the terminal."
+                }
+            }
+        }
         attentionNotifications.changed = { [weak self] count, issue in
             guard let self else { return }
             self.attentionCount = count
@@ -100,7 +138,7 @@ final class SearchPanel: NSPanel {
             if let issue { self.model.message = issue }
             else { self.updateAccessAttention() }
         }
-        attentionNotifications.start()
+        attentionNotifications.start(requestAuthorization: UserDefaults.standard.bool(forKey: "onboardingCompleted") && !CommandLine.arguments.contains("--onboarding"))
         let menu = NSMenu()
         let edit = NSMenuItem()
         edit.submenu = NSMenu(title: "Edit")
@@ -115,10 +153,17 @@ final class SearchPanel: NSPanel {
         let accessSettings = NSMenuItem(title: "Agent Access…", action: #selector(showAgentAccess), keyEquivalent: ",")
         accessSettings.target = self
         access.submenu?.addItem(accessSettings)
+        if Features.experimentalAgents {
+            let ask = NSMenuItem(title: "Ask Velocity…", action: #selector(showTextRequest), keyEquivalent: "")
+            ask.target = self
+            access.submenu?.addItem(ask)
+            let library = NSMenuItem(title: "Resource Library…", action: #selector(showResourceLibrary), keyEquivalent: "")
+            library.target = self; access.submenu?.addItem(library)
+        }
         menu.addItem(access)
         NSApp.mainMenu = menu
         installHotkeyHandler()
-        registerShortcut((UserDefaults.standard.object(forKey: "shortcut") as? Int) ?? 4)
+        registerShortcut((UserDefaults.standard.object(forKey: "shortcut") as? Int) ?? 5)
         if Features.experimentalAgents && RegisterEventHotKey(UInt32(kVK_ANSI_O), UInt32(controlKey | optionKey),
             EventHotKeyID(signature: 0x54564C43, id: 2), GetApplicationEventTarget(), 0, &objectiveHotKey) != noErr {
             model.message = "Objective shortcut unavailable. Use the menu-bar menu."
@@ -126,6 +171,10 @@ final class SearchPanel: NSPanel {
         keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
             guard let self, self.panel.isKeyWindow else { return event }
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if Features.experimentalAgents && self.matchesCurrentShortcut(event) {
+                if !event.isARepeat { self.showTextRequest() }
+                return nil
+            }
             if self.model.showCleanup {
                 if event.keyCode == 53 && !self.model.cleanup.busy { self.model.showCleanup = false; return nil }
                 return event
@@ -210,11 +259,12 @@ final class SearchPanel: NSPanel {
                 self.model.filter()
             }
         }
-        show()
+        if UserDefaults.standard.bool(forKey: "onboardingCompleted") && !CommandLine.arguments.contains("--onboarding") { show() }
+        else { showOnboarding() }
     }
 
     func trackActivity() {
-        guard !panel.isVisible, !trackingActivity, !switchingGroup, AXIsProcessTrusted(),
+        guard onboardingWindow?.isVisible != true, !panel.isVisible, !trackingActivity, !switchingGroup, AXIsProcessTrusted(),
               let app = NSWorkspace.shared.frontmostApplication,
               app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
         trackingActivity = true
@@ -256,29 +306,53 @@ final class SearchPanel: NSPanel {
         }, 1, &type, Unmanaged.passUnretained(self).toOpaque(), &eventHandler)
     }
 
-    func registerShortcut(_ requested: Int) {
-        let index = shortcuts.indices.contains(requested) ? requested : 4
+    func matchesCurrentShortcut(_ event: NSEvent) -> Bool {
+        let index = UserDefaults.standard.object(forKey: "shortcut") as? Int ?? 5
+        guard shortcuts.indices.contains(index) else { return false }
+        let shortcut = shortcuts[index]
+        var flags: NSEvent.ModifierFlags = []
+        if shortcut.1 & UInt32(cmdKey) != 0 { flags.insert(.command) }
+        if shortcut.1 & UInt32(optionKey) != 0 { flags.insert(.option) }
+        if shortcut.1 & UInt32(controlKey) != 0 { flags.insert(.control) }
+        if shortcut.1 & UInt32(shiftKey) != 0 { flags.insert(.shift) }
+        return event.keyCode == UInt16(shortcut.2) && event.modifierFlags.intersection([.command, .option, .control, .shift]) == flags
+    }
+
+    @discardableResult func registerShortcut(_ requested: Int) -> Bool {
+        let index = shortcuts.indices.contains(requested) ? requested : 5
+        if hotKey != nil, UserDefaults.standard.object(forKey: "shortcut") as? Int == index { return true }
         var replacement: EventHotKeyRef?
         let result = RegisterEventHotKey(shortcuts[index].2, shortcuts[index].1,
                                         EventHotKeyID(signature: 0x54564C43, id: 1), GetApplicationEventTarget(), 0, &replacement)
         guard result == noErr else {
             model.message = "Shortcut unavailable. Choose another in the menu."
-            return
+            return false
         }
         if let hotKey { UnregisterEventHotKey(hotKey) }
         hotKey = replacement
+        model.shortcutRegistered = true
         model.shortcut = shortcuts[index].0
         UserDefaults.standard.set(index, forKey: "shortcut")
         status.button?.toolTip = "Terminal Velocity — \(model.shortcut)"
+        return true
     }
 
     @objc func showTabCleanup() { show(); model.showCleanup = true }
+
+    @objc func showClosedTabs() { show(); model.query = "@closed" }
+    @objc func clearClosedTabs() { model.closedTabs.clear(); model.filter(preserveSelection: true) }
 
     func statusMenu() -> NSMenu {
         let menu = NSMenu()
         add("Search Windows…", #selector(openFromMenuBar), to: menu)
         add("Clean Up Tabs…", #selector(showTabCleanup), to: menu)
+        add("Recently Closed Tabs…", #selector(showClosedTabs), to: menu)
+        add("Clear Recently Closed Tabs", #selector(clearClosedTabs), to: menu)
         let pending = resourceBroker.requests.filter { $0.status == .pending }.count
+        if Features.experimentalAgents {
+            add("Ask Velocity…", #selector(showTextRequest), to: menu)
+            add("Resource Library…", #selector(showResourceLibrary), to: menu)
+        }
         add(pending > 0 ? "Agent Access (\(pending) requests)…" : "Agent Access…", #selector(showAgentAccess), to: menu)
         if Features.experimentalAgents { add("Switch Objectives…  ⌃⌥O", #selector(switchObjectives), to: menu) }
         add("Attention (\(attentionCount))", #selector(showAttention), to: menu)
@@ -297,6 +371,7 @@ final class SearchPanel: NSPanel {
             choices.addItem(item)
         }
         shortcut.submenu = choices; menu.addItem(shortcut)
+        add("Welcome to Velocity…", #selector(showOnboarding), to: menu)
         add("Accessibility Settings…", #selector(accessibility), to: menu)
         add("Enable Chrome & Safari Tabs…", #selector(enableBrowserTabs), to: menu)
         menu.addItem(.separator())
@@ -417,11 +492,17 @@ final class SearchPanel: NSPanel {
     }
     @objc func toggle() {
         if PalettePresentation.shouldDismiss(visible: panel.isVisible, key: panel.isKeyWindow, active: NSApp.isActive) {
-            dismiss(restore: true)
+            if Features.experimentalAgents { showTextRequest() }
+            else { dismiss(restore: true) }
+        } else if Features.experimentalAgents, textRequestWindow?.isKeyWindow == true {
+            textRequestModel?.invalidate()
+            textRequestWindow?.orderOut(nil)
+            show()
         } else { show() }
     }
 
     func show() {
+        model.liveMatchingActive = true
         model.showAIGrouping = false
         model.objectiveMode = false
         if let frontmost = NSWorkspace.shared.frontmostApplication,
@@ -445,6 +526,7 @@ final class SearchPanel: NSPanel {
     }
 
     func refresh() {
+        guard onboardingWindow?.isVisible != true else { return }
         model.trusted = AXIsProcessTrusted()
         guard model.trusted, !scanning, !model.cleanup.busy else { return }
         lastCatalogRefresh = Date()
@@ -457,6 +539,8 @@ final class SearchPanel: NSPanel {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.snapshotGeneration += 1
+                self.model.closedTabs.observe(snapshot.entries, complete: snapshot.completeBrowsers.contains("com.google.Chrome"),
+                    launch: NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.Chrome").first?.launchDate)
                 self.model.all = snapshot.entries
                 self.resourceBroker.reconcile(snapshot.entries)
                 self.model.cleanup.observe(snapshot.entries)
@@ -472,6 +556,7 @@ final class SearchPanel: NSPanel {
     }
 
     func refreshAudio() {
+        guard onboardingWindow?.isVisible != true else { return }
         guard model.trusted, !updatingAudio else { return }
         updatingAudio = true
         let generation = snapshotGeneration
@@ -521,6 +606,35 @@ final class SearchPanel: NSPanel {
     }
 
     func choose(_ entry: WindowEntry) {
+        if let closed = entry.closedTab {
+            if closed.reopen() {
+                model.closedTabs.remove(closed.id)
+                model.filter(preserveSelection: true)
+                panel.orderOut(nil)
+                refresh()
+            } else {
+                let alert = NSAlert()
+                alert.messageText = "Reopen in Chrome’s current profile?"
+                alert.informativeText = "The original window could not be reopened. This will open the saved address in Chrome’s current profile, which may differ from \(closed.profile ?? "the original profile")."
+                alert.addButton(withTitle: "Reopen")
+                alert.addButton(withTitle: "Cancel")
+                guard alert.runModal() == .alertFirstButtonReturn,
+                      ClosedTabs.validURL(closed.url), let url = URL(string: closed.url),
+                      let browser = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome") else { return }
+                NSWorkspace.shared.open([url], withApplicationAt: browser, configuration: .init()) { [weak self] app, error in
+                    Task { @MainActor in
+                        guard let self else { return }
+                        if app != nil && error == nil {
+                            self.model.closedTabs.remove(closed.id)
+                            self.model.filter(preserveSelection: true)
+                            self.panel.orderOut(nil)
+                            self.refresh()
+                        } else { self.model.message = "Couldn’t reopen this tab. It remains in Recently Closed." }
+                    }
+                }
+            }
+            return
+        }
         if let url = entry.launchURL {
             NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { [weak self] app, error in
                 DispatchQueue.main.async {
@@ -555,6 +669,8 @@ final class SearchPanel: NSPanel {
     }
 
     func dismiss(restore: Bool) {
+        model.liveMatchingActive = false
+        model.liveMatcher.cancel()
         if restore, let previousApp {
             NSApp.yieldActivation(to: previousApp)
             previousApp.activate(from: .current, options: [])
@@ -566,6 +682,8 @@ final class SearchPanel: NSPanel {
         // palette that has already regained focus through the global shortcut.
         DispatchQueue.main.async { [weak self] in
             guard let self, !self.panel.isKeyWindow else { return }
+            self.model.liveMatchingActive = false
+            self.model.liveMatcher.cancel()
             self.panel.orderOut(nil)
         }
     }

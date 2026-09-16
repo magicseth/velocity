@@ -58,7 +58,7 @@ enum Conversations {
             func rows(_ node: AXUIElement, depth: Int) {
                 guard depth < 12, Date() < deadline else { return }
                 let nodes = Accessibility.children(node)
-                if Accessibility.string(node, kAXRoleAttribute) == kAXRowRole && Accessibility.label(node, includingValue: true).isEmpty {
+                if Accessibility.string(node, kAXRoleAttribute) == kAXRowRole {
                     let names = texts(node, depth: 0).filter { !$0.isEmpty }
                     if names.count == 1 {
                         result.append((.init(appID: appID, name: names[0], scope: scope), node))
@@ -124,8 +124,22 @@ enum Conversations {
         // only while its owning app is foreground and its bounds are on screen.
         var pid: pid_t = 0
         AXUIElementGetPid(node, &pid)
+        // Slack's row bounds may cover a virtualized region rather than its label.
+        // Aim at the exact visible name, while retaining the row for hit testing.
+        func nameLabel(_ element: AXUIElement, depth: Int) -> AXUIElement? {
+            guard depth < 5 else { return nil }
+            if Accessibility.string(element, kAXRoleAttribute) == kAXStaticTextRole,
+               Accessibility.label(element, includingValue: true) == destination.name { return element }
+            for child in Accessibility.children(element) {
+                if let label = nameLabel(child, depth: depth + 1) { return label }
+            }
+            return nil
+        }
+        let clickTarget = destination.appID == slackID ? nameLabel(node, depth: 0) ?? node : node
+        if destination.appID == slackID,
+           AXUIElementPerformAction(clickTarget, kAXPressAction as CFString) == .success { return true }
         guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
-              let frame = Accessibility.frame(node) else { return false }
+              let frame = Accessibility.frame(clickTarget) else { return false }
         let center = CGPoint(x: frame.midX, y: frame.midY)
         // Hit-test to avoid clicking content covering a stale/offscreen sidebar row.
         var hit: AXUIElement?

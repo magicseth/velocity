@@ -20,6 +20,7 @@ import Combine
     private let processIdentity: (pid_t) -> String
     private var revokedSessionAgents: Set<UUID> = []
     private var inFlight: Set<UUID> = []
+    private var consumedLocalSends: Set<UUID> = []
     private let storage: AccessStorage?
     private let clock: () -> Date
     private let writeAudit: (AccessAudit) throws -> Void
@@ -65,6 +66,18 @@ import Combine
         agents.append(agent); try save()
         return token
     }
+    /// Native enrollment only: no window project permissions are inherited.
+    func pairDirectoryReader() throws -> (id: UUID, token: String) {
+        let token = try AccessStorage.token()
+        let agent = AgentIdentity(id: UUID(), name: "Prefrontal directory reader", tokenDigest: AccessStorage.digest(token), projects: [])
+        try log("agent.directoryReader.paired", agent: agent.id)
+        agents.append(agent); try save()
+        return (agent.id, token)
+    }
+    func auditDirectory(_ event: String, agent: UUID, resource: UUID? = nil, request: UUID? = nil) throws {
+        try log(event, agent: agent, resource: resource, request: request)
+    }
+    func directoryReaderFailed() { issue = "Directory reader credential publication failed; access is stopped." }
     func authenticate(_ token: String) throws -> UUID {
         guard issue == nil, token.count == 64 else { throw AccessError.unauthorized }
         let digest = AccessStorage.digest(token)
@@ -186,6 +199,92 @@ import Combine
         let request = requests[index]
         try log("action.denied", agent: request.agentID, resource: request.resourceID, request: id)
         requests[index].status = .denied
+    }
+    /// Local metadata tools do not activate apps, read transcripts, or alter agent scope.
+    func inspectLocally(_ resource: ManagedResource) throws -> ResourceInspection {
+        guard resources.contains(resource), resource.safety != .blocked,
+              let entry = entries[resource.id] else { throw AccessError.stale }
+        return ResourceInspector.inspect(resource, entry: entry, observed: clock())
+    }
+    func libraryKey(_ resource: ManagedResource) -> String? {
+        guard resources.contains(resource), let entry = entries[resource.id] else { return nil }
+        return AccessStorage.digest(entry.memoryKey + "|" + (entry.browserProfile ?? ""))
+    }
+    func localLink(_ resourceID: UUID) -> String? {
+        guard let resource = resources.first(where: { $0.id == resourceID }), resource.safety != .blocked,
+              let url = entries[resourceID]?.browserTab?.url, MessageLinks.validURL(url) else { return nil }
+        return url
+    }
+    func localPlaying(_ resourceID: UUID) -> Bool { entries[resourceID]?.audio == .playing }
+    /// The preview is created locally and never accepted by the external API.
+    func sendLinkLocally(_ preview: LinkDeliveryPreview, authenticate: () async throws -> Bool,
+                         verifySource: (WindowEntry) -> Bool = MessageLinks.sourceIsCurrent,
+                         send: @MainActor (LinkDeliveryPreview) async throws -> Bool = { try await DeliveryAdapters.shared.send($0) }) async throws -> Bool {
+        func current() throws -> WindowEntry {
+            guard issue == nil else { throw AccessError.storage }
+            guard clock().timeIntervalSince(preview.created) >= 0, clock().timeIntervalSince(preview.created) < 300,
+                  resources.contains(preview.resource), preview.resource.safety != .blocked,
+                  localLink(preview.resource.id) == preview.url, MessageLinks.validURL(preview.body),
+                  let entry = entries[preview.resource.id], processEpochs[preview.resource.id] == processIdentity(entry.pid) else { throw AccessError.stale }
+            return entry
+        }
+        _ = try current()
+        guard consumedLocalSends.count < 5000, !consumedLocalSends.contains(preview.id), !inFlight.contains(preview.resource.id) else { throw AccessError.limited }
+        consumedLocalSends.insert(preview.id)
+        inFlight.insert(preview.resource.id)
+        defer { inFlight.remove(preview.resource.id) }
+        try log("local.sendLink.requested", resource: preview.resource.id, request: preview.id)
+        let approved: Bool
+        do { approved = try await authenticate() }
+        catch { try log("local.sendLink.authenticationFailed", resource: preview.resource.id, request: preview.id); throw error }
+        guard approved else {
+            try log("local.sendLink.denied", resource: preview.resource.id, request: preview.id)
+            throw AccessError.unauthorized
+        }
+        let entry = try current()
+        guard verifySource(entry) else { throw AccessError.stale }
+        try log("local.sendLink.biometricApproved", resource: preview.resource.id, request: preview.id)
+        try log("local.sendLink.dispatching", resource: preview.resource.id, request: preview.id)
+        let accepted: Bool
+        do { accepted = try await send(preview) }
+        catch { try log("local.sendLink.unconfirmed", resource: preview.resource.id, request: preview.id); throw error }
+        try log(accepted ? "local.sendLink.accepted" : "local.sendLink.rejected", resource: preview.resource.id, request: preview.id)
+        return accepted
+    }
+    /// Native request composer only. This never assigns a project, issues a grant,
+    /// or creates credentials usable by an external client.
+    func openLocally(_ proposed: ManagedResource, proposedAt: Date,
+                     authenticate: () async throws -> Bool) async throws -> Bool {
+        func current() throws -> WindowEntry {
+            guard issue == nil else { throw AccessError.storage }
+            guard clock().timeIntervalSince(proposedAt) >= 0, clock().timeIntervalSince(proposedAt) < 300,
+                  let target = resources.first(where: { $0.id == proposed.id }), target == proposed,
+                  target.safety != .blocked, target.capabilities.contains(.open),
+                  let entry = entries[target.id], processEpochs[target.id] == processIdentity(entry.pid) else { throw AccessError.stale }
+            return entry
+        }
+        _ = try current()
+        guard !inFlight.contains(proposed.id) else { throw AccessError.limited }
+        inFlight.insert(proposed.id)
+        defer { inFlight.remove(proposed.id) }
+        let requestID = UUID()
+        try log("local.open.requested", resource: proposed.id, request: requestID)
+        let approved: Bool
+        do { approved = try await authenticate() }
+        catch {
+            try log("local.open.authenticationFailed", resource: proposed.id, request: requestID)
+            throw error
+        }
+        guard approved else {
+            try log("local.open.denied", resource: proposed.id, request: requestID)
+            throw AccessError.unauthorized
+        }
+        let entry = try current()
+        try log("local.open.biometricApproved", resource: proposed.id, request: requestID)
+        try log("local.open.executing", resource: proposed.id, request: requestID)
+        let success = await executor(entry, .open)
+        try log(success ? "local.open.succeeded" : "local.open.failed", resource: proposed.id, request: requestID)
+        return success
     }
     private func execute(_ id: UUID) async throws {
         guard let index = requests.firstIndex(where: { $0.id == id }), requests[index].status == .pending else { throw AccessError.stale }

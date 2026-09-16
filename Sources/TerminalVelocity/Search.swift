@@ -5,7 +5,7 @@ struct SearchQuery {
     let commands: Set<String>
     let apps: [String]
     let folders: [String]
-    static let known: Set<String> = ["@projects", "@attention", "@ready", "@waiting", "@agents", "@audio", "@playing", "@muted", "@recent", "@tabs", "@windows", "@minimized"]
+    static let known: Set<String> = ["@closed", "@projects", "@attention", "@ready", "@waiting", "@agents", "@audio", "@playing", "@muted", "@recent", "@tabs", "@windows", "@minimized"]
 
     init(_ query: String) {
         // Quotes allow app and folder names containing spaces.
@@ -32,6 +32,7 @@ struct SearchQuery {
     }
 
     func accepts(_ entry: WindowEntry, recent: Bool) -> Bool {
+        if commands.contains("@closed") && entry.closedTab == nil { return false }
         if !apps.allSatisfy({ entry.appName.localizedStandardContains($0) }) { return false }
         if !folders.allSatisfy({ entry.documentFolder.localizedStandardContains($0) }) { return false }
         if commands.contains("@projects") && entry.chatProject == nil { return false }

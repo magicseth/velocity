@@ -9,11 +9,16 @@ struct AccessMessage: Codable {
     var nonce: UUID?
     var reason: String?
     var requestID: UUID?
+    var `protocol`: String?
+    var scopeRevision: UUID?
 }
 struct AccessResponse: Codable {
     var resources: [ManagedResource]?
     var request: ActionRequest?
     var error: String?
+    var errorClass: String?
+    var directoryCatalog: DirectoryCatalog?
+    var directoryInspection: DirectoryInspection?
 }
 /// A small bounded HTTP envelope, not a general-purpose web server. No cookies,
 /// browser origins, chunked bodies, pipelining, or unauthenticated discovery.
@@ -49,6 +54,7 @@ enum AccessHTTP {
 
 @MainActor final class AccessServer {
     private let broker: ResourceBroker
+    var directoryBridge: DirectoryBridge?
     private var listener: NWListener?
     private var connections: [UUID: NWConnection] = [:]
     private var generation = UUID()
@@ -63,7 +69,7 @@ enum AccessHTTP {
         listener.stateUpdateHandler = { [weak self, weak listener] state in
             Task { @MainActor in
                 guard let self, self.generation == generation else { return }
-                if case .ready = state, let port = listener?.port { self.broker.endpoint = "http://127.0.0.1:\(port.rawValue)/v1/access" }
+                if case .ready = state, let port = listener?.port { self.broker.endpoint = "http://127.0.0.1:\(port.rawValue)/v1/access"; do { try self.directoryBridge?.publish(endpoint: self.broker.endpoint!) } catch { self.broker.directoryReaderFailed(); self.stop() } }
                 if case .failed = state { self.stop() }
             }
         }
@@ -104,9 +110,23 @@ enum AccessHTTP {
         }
     }
     func handle(_ envelope: AccessHTTP.Envelope) async -> AccessResponse {
+        var directoryOperation = false
         do {
             let agent = try broker.authenticate(envelope.token)
             let message = try JSONDecoder().decode(AccessMessage.self, from: envelope.body)
+            directoryOperation = message.operation.hasPrefix("directory.")
+            if directoryOperation {
+                guard let object = try JSONSerialization.jsonObject(with: envelope.body) as? [String: Any], message.protocol == "velocity/1", let bridge = directoryBridge else { throw AccessError.unsupported }
+                let allowed: Set<String> = message.operation == "directory.discover" ? ["operation", "protocol"] : ["operation", "protocol", "scopeRevision", "resourceID", "revision", "requestID"]
+                guard Set(object.keys).isSubset(of: allowed) else { throw AccessError.unsupported }
+                switch message.operation {
+                case "directory.discover": return .init(directoryCatalog: try await bridge.discover(agent: agent))
+                case "directory.inspect":
+                    guard let scope = message.scopeRevision, let resource = message.resourceID, let revision = message.revision, let request = message.requestID else { throw AccessError.unsupported }
+                    return .init(directoryInspection: try await bridge.inspection(agent: agent, scopeRevision: scope, resource: resource, revision: revision, request: request))
+                default: throw AccessError.unsupported
+                }
+            }
             switch message.operation {
             case "resources": return .init(resources: try broker.list(agent: agent))
             case "request":
@@ -119,7 +139,7 @@ enum AccessHTTP {
                 return .init(request: try broker.request(id, agent: agent))
             default: throw AccessError.unsupported
             }
-        } catch let error as AccessError { return .init(error: error.localizedDescription) }
+        } catch let error as AccessError { return .init(error: error.localizedDescription, errorClass: directoryOperation ? String(describing: error) : nil) }
         catch { return .init(error: "Invalid request.") }
     }
     private func send(_ response: AccessResponse, connection: NWConnection, id: UUID) {

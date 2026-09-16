@@ -14,5 +14,5 @@
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSAccessibilityUsageDescription</key><string>Search window titles and focus the window you choose.</string>
-    <key>NSAppleEventsUsageDescription</key><string>Read Chrome and Safari tab titles and URLs, switch to tabs, and close tabs you choose to clean up. No webpage content is read.</string>
+    <key>NSAppleEventsUsageDescription</key><string>Read browser tab titles and URLs, switch or close tabs you choose, and send an exact link through Messages only after you approve its recipient and content. No webpage content or message history is read.</string>
 </dict></plist>

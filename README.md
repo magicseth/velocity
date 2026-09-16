@@ -4,7 +4,7 @@
 
 You know Chrome’s tab search: press a shortcut, type a few words, and jump straight to the tab. Velocity brings that experience across your browser tabs, terminal sessions, app windows, and open AI conversations.
 
-Press **Command–Shift–A**, type what you’re looking for, and hit **Return**. One search box. One list. The agent waiting for your answer, the ChatGPT conversation open in a browser tab, the Claude session in a terminal, the document you were editing—all within reach.
+Press **Option–Space**, type what you’re looking for, and hit **Return**. One search box. One list. The agent waiting for your answer, the ChatGPT conversation open in a browser tab, the Claude session in a terminal, the document you were editing—all within reach.
 
 - **Find work across apps.** Search titles, browser URLs, app names, and exposed project or document paths.
 - **See which agents need you.** Recognized input requests rise to the top, with optional notifications.
@@ -62,12 +62,13 @@ On first launch, enable **Terminal Velocity** in **System Settings → Privacy &
 
 ## Use
 
-- **Command–Shift–A** to open / dismiss search. Click the menu-bar icon for search and settings. This is a global shortcut and takes priority over Chrome’s tab search while Velocity runs. Existing installations keep their chosen shortcut; change it from the menu-bar menu.
+- **Option–Space** to open / dismiss search on new installations. Existing installations keep their chosen shortcut. The welcome flow lets you choose an alternative if another launcher uses it; Command–Shift–A remains available. Click the menu-bar icon for search and settings.
 - Installed apps in `/Applications`, `/System/Applications`, and `~/Applications` are searchable even when closed. Choose a **Launch app** result to open it.
 - Type any part of an app name, window title, URL, or exposed document path. Project and folder names in those fields work too; document contents are not indexed.
 - Use `@AppName` or `app:"Visual Studio Code"` for any app, and `folder:"My Projects"` for document parent folders. Folder metadata depends on the app exposing its document URL; inactive tabs never inherit the selected document’s path.
 - `@recent`, `@audio`, `@playing`, `@muted`, `@tabs`, `@windows`, and `@minimized` narrow results and combine with app filters and plain words.
 - Recently used windows and exposed tabs automatically rank first among equally relevant matches, including switches outside Terminal Velocity. App activation notifications and a one-second foreground check update recents while the palette is closed. On an empty search, previous destinations precede the current one. Very brief visits between checks and inaccessible tab selections may not be captured. **Option–Command–1…9** opens a numbered result; **Command–/** opens keyboard help.
+- **Recently Closed Tabs…** in the menu, or `@closed` in search, shows Chrome tabs Velocity observed closing. Select one to reopen its saved URL in the original window. If that window is unavailable, Velocity asks before reopening in Chrome’s current profile. This local list holds up to 100 tabs for seven days; **Clear Recently Closed Tabs** erases it. Incognito tabs are excluded. Tracking requires browser-tab access and two successful scans confirming closure; it does not import earlier browser history or restore page state. Safari closed-tab tracking is not supported yet.
 - The window list refreshes every 12 seconds while open.
 - Standard **Command–A / C / V / X / Z** editing shortcuts work in the search field.
 - **↑ / ↓** select a result; **Return** focuses it; **Escape** returns to your previous app.
@@ -109,11 +110,13 @@ The diagnostic command needs its own Accessibility authorization when launched f
 
 ## Agent notifications
 
-When a terminal title reports **Action Required**, TV sends a native macOS notification with sound and keeps an attention count in the menu bar. Clicking the banner or menu-bar icon opens the unified list with attention first. Window/tab duplicates and blinking title markers produce one alert; brief title-read gaps do not retrigger it. Idle titles alone do not notify because they do not prove an agent has a question.
+When a terminal title reports **Action Required**, TV sends a native macOS notification with sound and keeps an attention count in the menu bar. Clicking a single-agent banner opens its terminal; ambiguous or unavailable targets fall back to the unified list. Window/tab duplicates and blinking title markers produce one alert; brief title-read gaps do not retrigger it. Idle titles alone do not notify because they do not prove an agent has a question.
 
-Allow notifications when macOS asks. Right-click TV’s menu-bar icon for **Agent Notifications**, **Test Notification**, and **Notification Settings**. macOS notification settings and Focus control banner and sound delivery. Detection runs while TV is running and has Accessibility access; no terminal contents are sent to a server for notifications.
+Supported explicit yes/no prompts and Codex’s “Yes, proceed (y)” menu offer **Yes, once** in the notification actions. Velocity focuses the exact terminal, rechecks its prompt, and sends the one-time reply. Approval expires after two minutes, cannot be replayed, and becomes unavailable after Velocity restarts. Changed or unsupported prompts open the terminal for manual review. No real agent approvals are sent by automated tests.
 
-Opening Velocity from its shortcut or menu-bar icon shows all apps in one list. Agents needing input come first when the search is empty, followed by audio items, then the usual recent results. Notification clicks open the same list. Matching window/tab attention entries are merged in the unified list.
+Allow notifications when macOS asks. Click TV’s menu-bar icon for **Agent Notifications**, **Test Notification**, and **Notification Settings**. macOS notification settings and Focus control banner and sound delivery. Detection runs while TV is running and has Accessibility access; no terminal contents are sent to a server for notifications.
+
+Opening Velocity from its shortcut or menu-bar icon shows all apps in one list. Agents needing input come first when the search is empty, followed by audio items, then the usual recent results. Single-agent notification clicks open the referenced terminal when it is still available. Matching window/tab attention entries are merged in the unified list.
 
 ## Chat app projects
 
@@ -127,7 +130,7 @@ Objectives, window grouping, AI grouping, and title-derived agent synopses are d
 
 ### Menu bar placement
 
-Velocity automatically checks whether its menu-bar icon is visible and clear of the notch. If the icon is hidden, clipped, or offscreen, a small **Velocity** button appears below the menu bar in the screen’s safe area. It disappears after the normal icon becomes accessible again. Click either button to open the same menu, including search, settings, updates, and quit. **Command–Shift–A** still opens search directly. This fallback keeps Velocity accessible; it does not rearrange other apps’ menu-bar items.
+Velocity automatically checks whether its menu-bar icon is visible and clear of the notch. If the icon is hidden, clipped, or offscreen, a small **Velocity** button appears below the menu bar in the screen’s safe area. It disappears after the normal icon becomes accessible again. Click either button to open the same menu, including search, settings, updates, and quit. Your chosen keyboard shortcut still opens search directly. This fallback keeps Velocity accessible; it does not rearrange other apps’ menu-bar items.
 
 ### Native tab cleanup
 
@@ -155,3 +158,7 @@ This indexes the navigation entries currently exposed by each app, not its full 
 ### Local agent access
 
 The optional **Agent Access…** panel provides project-scoped resource discovery, approval requests for supported open/close actions, expiring grants, revocation, and a local audit log. Access starts off and resources start private. See the [setup, API, and security boundaries](docs/agent-access.md).
+
+### Welcome flow
+
+First launch starts with an interactive sample-data demo before permission setup. It explains what Velocity searches, teaches the keyboard controls, explains Accessibility and browser Automation permissions, and offers a shortcut choice. Permissions can be set up later. Replay it from **Welcome to Velocity…** in the menu-bar menu.

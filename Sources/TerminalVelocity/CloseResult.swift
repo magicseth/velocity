@@ -2,7 +2,7 @@ import AppKit
 import ApplicationServices
 
 extension WindowEntry {
-    var canClose: Bool { launchURL == nil && chatProject == nil && conversation == nil }
+    var canClose: Bool { closedTab == nil && launchURL == nil && chatProject == nil && conversation == nil }
     var closeLabel: String { isTab ? "Close tab" : element != nil ? "Close window" : "Quit app" }
 }
 

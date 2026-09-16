@@ -11,6 +11,7 @@ struct BrowserTab: Sendable {
     let index: Int
     var isActive: Bool = true
     var loading: Bool = true
+    var historyEligible: Bool = false
 }
 
 enum BrowserTabs {
@@ -31,14 +32,15 @@ enum BrowserTabs {
         var tabs: [BrowserTab] = []
         guard result.numberOfItems > 0 else { return ([], nil) }
         for index in 1...result.numberOfItems {
-            guard let row = result.atIndex(index), row.numberOfItems == 9,
+            guard let row = result.atIndex(index), row.numberOfItems == 10,
                   let title = row.atIndex(3)?.stringValue,
                   let url = row.atIndex(4)?.stringValue else { continue }
             tabs.append(BrowserTab(browserID: browserID, windowID: Int(row.atIndex(1)!.int32Value),
                 tabID: Int(row.atIndex(2)!.int32Value), title: title, url: url,
                 minimized: row.atIndex(5)?.booleanValue ?? false,
                 windowTitle: row.atIndex(6)?.stringValue ?? "", index: Int(row.atIndex(7)?.int32Value ?? 0),
-                isActive: row.atIndex(8)?.booleanValue ?? true, loading: row.atIndex(9)?.booleanValue ?? true))
+                isActive: row.atIndex(8)?.booleanValue ?? true, loading: row.atIndex(9)?.booleanValue ?? true,
+                historyEligible: row.atIndex(10)?.booleanValue ?? false))
         }
         return (tabs, nil)
     }
@@ -54,9 +56,7 @@ enum BrowserTabs {
                     set tabNumber to 0
                     repeat with t in tabs of w
                         set tabNumber to tabNumber + 1
-                        try
-                            set end of output to {id of w as integer, \(safari ? "tabNumber" : "id of t as integer"), \(safari ? "name" : "title") of t as text, URL of t as text, \(safari ? "miniaturized" : "minimized") of w, name of w as text, tabNumber, tabNumber is (\(safari ? "index of current tab" : "active tab index") of w), \(safari ? "false" : "loading of t")}
-                        end try
+                        set end of output to {id of w as integer, \(safari ? "tabNumber" : "id of t as integer"), \(safari ? "name" : "title") of t as text, URL of t as text, \(safari ? "miniaturized" : "minimized") of w, name of w as text, tabNumber, tabNumber is (\(safari ? "index of current tab" : "active tab index") of w), \(safari ? "false" : "loading of t"), \(safari ? "false" : "mode of w is \"normal\"")}
                     end repeat
                 end repeat
                 return output

@@ -8,6 +8,21 @@ import { instructions, requestSchema, suggestionSchema, prepareSuggestions } fro
 
 import { classificationRequest, classificationOutput, classificationInstructions, validateClassification } from "../lib/classification";
 
+import { openRequest, openProposal, requestInstructions, validateOpenProposal } from "../lib/requests";
+const requestPlanner = new Agent(components.agent, {
+  name: "Window request planner",
+  languageModel: convexGateway("anthropic/claude-sonnet-4.5"),
+  instructions: requestInstructions,
+});
+import { textRequest, textProposal, textInstructions, validateTextProposal } from "../lib/requests";
+const textPlanner = new Agent(components.agent, {
+  name: "Local request planner",
+  languageModel: convexGateway("anthropic/claude-sonnet-4.5"), instructions: textInstructions,
+});
+import { matchRequest, matchOutput, matchInstructions, validateMatches } from "../lib/matching";
+const windowMatcher = new Agent(components.agent, {
+  name: "Window matcher", languageModel: convexGateway("google/gemini-2.5-flash-lite"), instructions: matchInstructions,
+});
 const router = httpRouter();
 const classifier = new Agent(components.agent, {
   name: "Desktop objective classifier",
@@ -81,5 +96,76 @@ router.route({ path: "/classify-objectives", method: "POST", handler: httpAction
     console.error("Objective batch failed", { windows: input.candidates.length, total: input.overview.length, elapsedMs: Date.now() - started, errorType: name });
     return json({ error: timedOut ? "This batch timed out. Completed windows are saved; retry to continue." : "This batch could not be classified. Completed windows are saved; retry to continue." }, timedOut ? 504 : 502);
   }
+}) });
+router.route({ path: "/plan-open", method: "POST", handler: httpAction(async (ctx, request) => {
+  const token = process.env.TV_DEVICE_TOKEN;
+  if (!token || token.length < 32) return json({ error: "Request planning is not configured." }, 503);
+  if (request.headers.get("Authorization") !== `Bearer ${token}`) return json({ error: "Unauthorized" }, 401);
+  if (request.headers.has("Origin")) return json({ error: "Browser requests are not supported." }, 403);
+  if (Number(request.headers.get("Content-Length") ?? 0) > 2000000) return json({ error: "Too much metadata." }, 413);
+  const body = await request.text();
+  if (new TextEncoder().encode(body).length > 2000000) return json({ error: "Too much metadata." }, 413);
+  let input;
+  try {
+    input = openRequest.parse(JSON.parse(body));
+    if (new Set(input.resources.map(r => r.id)).size !== input.resources.length) throw new Error("Duplicate IDs");
+  } catch { return json({ error: "Invalid request." }, 400); }
+  try {
+    const result = await requestPlanner.generateText(ctx, { userId: "desktop-owner" }, {
+      tools: { propose_open: tool({ description: "Propose existing targets for local review. Does not execute anything.", inputSchema: openProposal }) },
+      toolChoice: { type: "tool", toolName: "propose_open" },
+      prompt: JSON.stringify(input), maxOutputTokens: 1800, abortSignal: AbortSignal.timeout(60000),
+    }, { storageOptions: { saveMessages: "none" } });
+    return json(validateOpenProposal(input, result.toolCalls.find(call => call.toolName === "propose_open")?.input));
+  } catch {
+    return json({ error: "Couldn’t interpret the request. Try again." }, 502);
+  }
+}) });
+router.route({ path: "/plan-request", method: "POST", handler: httpAction(async (ctx, request) => {
+  const token = process.env.TV_DEVICE_TOKEN;
+  if (!token || token.length < 32) return json({ error: "Request planning is not configured." }, 503);
+  if (request.headers.get("Authorization") !== `Bearer ${token}`) return json({ error: "Unauthorized" }, 401);
+  if (request.headers.has("Origin")) return json({ error: "Browser requests are not supported." }, 403);
+  if (Number(request.headers.get("Content-Length") ?? 0) > 2000000) return json({ error: "Too much metadata." }, 413);
+  const body = await request.text();
+  if (new TextEncoder().encode(body).length > 2000000) return json({ error: "Too much metadata." }, 413);
+  let input;
+  try {
+    input = textRequest.parse(JSON.parse(body));
+    if (new Set(input.resources.map(r => r.id)).size !== input.resources.length) throw new Error("Duplicate IDs");
+  } catch { return json({ error: "Invalid request." }, 400); }
+  try {
+    const result = await textPlanner.generateText(ctx, { userId: "desktop-owner" }, {
+      tools: { propose_open: tool({ description: "Propose existing targets for local review. Does not execute anything.", inputSchema: textProposal }) },
+      toolChoice: { type: "tool", toolName: "propose_open" },
+      prompt: JSON.stringify(input), maxOutputTokens: 1800, abortSignal: AbortSignal.timeout(60000),
+    }, { storageOptions: { saveMessages: "none" } });
+    return json(validateTextProposal(input, result.toolCalls.find(call => call.toolName === "propose_open")?.input));
+  } catch {
+    return json({ error: "Couldn’t interpret the request. Try again." }, 502);
+  }
+}) });
+router.route({ path: "/match-windows", method: "POST", handler: httpAction(async (ctx, request) => {
+  const token = process.env.TV_DEVICE_TOKEN;
+  if (!token || token.length < 32) return json({ error: "Matching is not configured." }, 503);
+  if (request.headers.get("Authorization") !== `Bearer ${token}`) return json({ error: "Unauthorized" }, 401);
+  if (request.headers.has("Origin")) return json({ error: "Browser requests are not supported." }, 403);
+  if (Number(request.headers.get("Content-Length") ?? 0) > 2000000) return json({ error: "Too much metadata." }, 413);
+  const body = await request.text();
+  if (new TextEncoder().encode(body).length > 2000000) return json({ error: "Too much metadata." }, 413);
+  let input;
+  try {
+    input = matchRequest.parse(JSON.parse(body));
+    if (new Set(input.windows.map(w => w.id)).size !== input.windows.length) throw new Error("Duplicate IDs");
+  } catch { return json({ error: "Invalid search metadata." }, 400); }
+  const started = Date.now();
+  try {
+    const result = await windowMatcher.generateText(ctx, { userId: "desktop-owner" }, {
+      tools: { matches: tool({ description: "Return ranked matching window IDs.", inputSchema: matchOutput }) },
+      toolChoice: { type: "tool", toolName: "matches" }, prompt: JSON.stringify(input),
+      maxOutputTokens: 300, abortSignal: AbortSignal.timeout(10000),
+    }, { storageOptions: { saveMessages: "none" } });
+    return json({ ...validateMatches(input, result.toolCalls.find(call => call.toolName === "matches")?.input), elapsedMs: Date.now() - started });
+  } catch { return json({ error: "AI matching is unavailable; local search still works." }, 502); }
 }) });
 export default router;

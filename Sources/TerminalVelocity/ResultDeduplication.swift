@@ -26,8 +26,15 @@ enum ResultDeduplication {
     }
 
     static func terminalTitle(_ title: String) -> String {
-        title.replacingOccurrences(of: #"\s+—\s+\d+[×x]\d+\s*$"#, with: "", options: .regularExpression)
+        let stripped = title.replacingOccurrences(of: #"\s+—\s+\d+[×x]\d+\s*$"#, with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        var parts = stripped.components(separatedBy: " — ")
+        // Terminal uses a full folder path in its tab label and a basename in
+        // the owning window title. Preserve every remaining title component.
+        if parts.count > 1, parts[0].hasPrefix("/") || parts[0].hasPrefix("~/") {
+            parts[0] = (parts[0] as NSString).lastPathComponent
+        }
+        return parts.joined(separator: " — ")
     }
     static func removingRepresentedWindows(_ entries: [WindowEntry]) -> [WindowEntry] {
         let destinations = entries.filter { $0.representedWindowTitle != nil }

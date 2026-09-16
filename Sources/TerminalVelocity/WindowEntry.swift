@@ -25,12 +25,13 @@ struct WindowEntry: Identifiable, @unchecked Sendable {
     // A destination can represent its owning window even when their labels differ.
     var representedWindowTitle: String? = nil
     var browserPinned = false
+    var closedTab: ClosedTab? = nil
     var documentFolder: String {
         guard let documentPath else { return "" }
         return (documentPath as NSString).deletingLastPathComponent
     }
     var searchText: String {
-        [title, representedWindowTitle, browserTab?.url, documentPath, browserProfile, chatProject?.mode].compactMap { $0 }.joined(separator: " ")
+        [title, representedWindowTitle, browserTab?.url ?? closedTab?.url, documentPath, browserProfile, chatProject?.mode].compactMap { $0 }.joined(separator: " ")
     }
     var groupFingerprint: String {
         let normalized = title.replacingOccurrences(of: #"\[\s*[!.]\s*\] Action Required\s*\|?\s*|[✳◐◑]\s*"#, with: "", options: .regularExpression)
@@ -62,8 +63,12 @@ struct WindowEntry: Identifiable, @unchecked Sendable {
         // Remember only user-selected identifiers, not a browsing log.
         return SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
     }
-    var isTab: Bool { tab != nil || browserTab != nil }
+    var isTab: Bool { tab != nil || browserTab != nil || closedTab != nil }
     var subtitle: String {
+        if let closedTab {
+            let age = RelativeDateTimeFormatter().localizedString(for: closedTab.closed, relativeTo: Date())
+            return [appName, "Recently closed " + age, browserProfile, URL(string: closedTab.url)?.host].compactMap { $0 }.joined(separator: " · ")
+        }
         if let conversation { return appName + (conversation.appID == Conversations.slackID ? " · Channel / DM" : " · Conversation") }
         if let chatProject { return appName + (chatProject.mode == "Workspace" ? " · Workspace" : " · Project · " + chatProject.mode) }
         if launchURL != nil { return "Launch app" }

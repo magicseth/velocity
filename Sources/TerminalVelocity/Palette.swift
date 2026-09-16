@@ -11,6 +11,7 @@ struct SearchResults {
 @MainActor final class PaletteModel: ObservableObject {
     @Published var showCleanup = false
     let cleanup = TabCleanupModel()
+    let closedTabs: ClosedTabs
     @Published var showAIGrouping = false
     @Published var aiCandidates: [GroupingCandidate] = []
     @Published var aiSelectedCandidates: Set<String> = []
@@ -42,7 +43,18 @@ struct SearchResults {
         guard count > 0 else { return }
         objectiveSelection = (objectiveSelection + delta + count) % count
     }
-    @Published var query = "" { didSet { if query != oldValue { filter() } } }
+    var liveMatchingActive = false
+    let liveMatcher = LiveWindowMatcher()
+    @Published var liveMatchStatus: String?
+    var searchingLive: Bool { liveMatchStatus == "Waiting to search…" || liveMatchStatus == "AI matching…" }
+    var liveMatchIDs: [String] = []
+    @Published var liveMatchingEnabled = UserDefaults.standard.object(forKey: "liveMatchingEnabled") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(liveMatchingEnabled, forKey: "liveMatchingEnabled")
+            liveMatchIDs = []; filter(preserveSelection: true); scheduleLiveMatching()
+        }
+    }
+    @Published var query = "" { didSet { if query != oldValue { liveMatchIDs = []; filter(); scheduleLiveMatching() } } }
     @Published private(set) var resultState = SearchResults()
     var results: [WindowEntry] { resultState.entries }
     var selected: Int { results.firstIndex { $0.id == resultState.selectedID } ?? -1 }
@@ -96,7 +108,8 @@ struct SearchResults {
         }
     }
     let memory: SelectionMemory
-    init(memory: SelectionMemory = SelectionMemory()) {
+    init(memory: SelectionMemory = SelectionMemory(), closedTabs: ClosedTabs? = nil) {
+        self.closedTabs = closedTabs ?? ClosedTabs(file: nil)
         self.memory = memory
         if Features.experimentalAgents, let data = UserDefaults.standard.data(forKey: "objectiveGroups"),
            let restored = try? JSONDecoder().decode([WindowGroup].self, from: data) {
@@ -121,13 +134,22 @@ struct SearchResults {
             })
         }
     }
-    var all: [WindowEntry] = []
+    var all: [WindowEntry] = [] {
+        didSet {
+            liveMatchIDs.removeAll { id in
+                guard let before = oldValue.first(where: { $0.id == id }), let after = all.first(where: { $0.id == id }) else { return true }
+                return before.title != after.title || before.appName != after.appName
+            }
+            scheduleLiveMatching()
+        }
+    }
     var choose: (() -> Void)?
     var chooseEntry: ((WindowEntry) -> Void)?
     var closeEntry: ((WindowEntry) -> Void)?
     @Published var closingEntries: Set<String> = []
     var refresh: (() -> Void)?
-    var shortcut = "⌘⇧A"
+    @Published var shortcut = "⌥ Space"
+    @Published var shortcutRegistered = false
 
     func openAllApps() {
         query = ""
@@ -137,12 +159,13 @@ struct SearchResults {
     func filter(preserveSelection: Bool = false) {
         let selectedID = preserveSelection ? resultState.selectedID : nil
         let parsed = SearchQuery(query)
-        var nextResults = all.enumerated().compactMap { index, entry -> (Int, Double, Int, WindowEntry)? in
+        var nextResults = (all + closedTabs.records.map(\.entry)).enumerated().compactMap { index, entry -> (Int, Double, Int, WindowEntry)? in
             let key = entry.memoryKey
             let recent = memory.recent[key] ?? 0
             guard parsed.accepts(entry, recent: recent > 0) else { return nil }
             let searchText = entry.searchText
-            guard let score = WindowSearch.score(query: parsed.text, title: searchText, app: entry.appName) else { return nil }
+            let semanticRank = liveMatchIDs.firstIndex(of: entry.id)
+            guard let score = WindowSearch.score(query: parsed.text, title: searchText, app: entry.appName) ?? semanticRank.map({ -1 - $0 }) else { return nil }
             // Like Command-Tab: the current item follows the previous destination.
             let rank = parsed.text.isEmpty && key == memory.currentKey ? 0.5 : recent
             return (score, rank == 0 && entry.launchURL != nil ? -1 : rank, index, entry)
@@ -150,6 +173,8 @@ struct SearchResults {
             if ($0.3.launchURL != nil) != ($1.3.launchURL != nil) {
                 return $0.3.launchURL == nil
             }
+            if ($0.3.closedTab != nil) != ($1.3.closedTab != nil) { return $0.3.closedTab == nil }
+            if let first = $0.3.closedTab, let second = $1.3.closedTab, parsed.text.isEmpty { return first.closed > second.closed }
             if parsed.text.isEmpty {
                 let first = $0.3.attention.needsAttention ? 2 : ($0.3.audio != .none ? 1 : 0)
                 let second = $1.3.attention.needsAttention ? 2 : ($1.3.audio != .none ? 1 : 0)
@@ -211,6 +236,15 @@ struct PaletteView: View {
             }.padding(24)
 
             Divider()
+            if model.loading || model.searchingLive {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(model.loading ? "Still searching · refreshing windows and tabs…" : "Still searching · finding AI matches…")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                    Spacer()
+                }.padding(.horizontal, 24).padding(.vertical, 8)
+                Divider()
+            }
 
             if model.trusted && (!model.browserTabsEnabled || model.browserNotice != nil) {
                 HStack(spacing: 10) {
@@ -299,7 +333,10 @@ struct PaletteView: View {
             HStack(spacing: 16) {
                 Button { model.showCleanup = true } label: { Label("Clean up tabs", systemImage: "rectangle.stack.badge.minus") }.buttonStyle(.plain)
                 if Features.experimentalAgents {
-                    Button { model.beginAIGrouping() } label: { Label("AI groups", systemImage: "sparkles") }.buttonStyle(.plain)
+                    Button { model.beginAIGrouping() } label: { Image(systemName: "rectangle.3.group") }.buttonStyle(.plain).help("AI groups")
+                    Button { model.liveMatchingEnabled.toggle() } label: {
+                        Label(model.liveMatchStatus ?? (model.liveMatchingEnabled ? "AI search on" : "AI search off"), systemImage: "sparkles")
+                    }.buttonStyle(.plain).help("Flash-Lite matches your search against window titles through your AI Gateway. Click to toggle.")
                 }
                 Text(model.message ?? (model.trusted ? "\(model.results.count) results" : "Permission needed"))
                     .lineLimit(1)
@@ -434,7 +471,7 @@ struct PaletteView: View {
                 }.font(.system(size: 12))
                 Divider()
                 Text("SEARCH COMMANDS").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
-                Text("@Notes ideas    app:\"Visual Studio Code\" waveshare\n@attention    @waiting    @ready    @agents\n@audio    @playing    @muted    @recent\n@tabs    @windows    @minimized\nfolder:\"My Projects\"    waveshare")
+                Text("@Notes ideas    app:\"Visual Studio Code\" waveshare\n@attention    @waiting    @ready    @agents\n@audio    @playing    @muted    @recent\n@tabs    @closed    @windows    @minimized\nfolder:\"My Projects\"    waveshare")
                     .font(.system(size: 12, design: .monospaced)).lineSpacing(7)
                 Text("Use @ followed by any app name. Plain words match app names, titles, URLs, and exposed document paths. folder: matches document parent folders when available. Recently used windows rise to the top, including switches outside this app; the current window follows previous destinations. Filters combine.")
                     .font(.system(size: 11)).foregroundStyle(.secondary)

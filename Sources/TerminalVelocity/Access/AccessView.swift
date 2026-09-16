@@ -24,6 +24,7 @@ struct AccessView: View {
             if let issue = broker.issue ?? error { Text(issue).foregroundStyle(.red) }
             TabView {
                 resources.tabItem { Text("Resources") }
+                directories.tabItem { Text("Directories") }
                 identities.tabItem { Text("Agents & projects") }
                 approvals.tabItem { Text("Requests (\(broker.requests.filter { $0.status == .pending }.count))") }
                 permissions.tabItem { Text("Grants") }
@@ -54,6 +55,24 @@ struct AccessView: View {
                     }.labelsHidden().frame(width: 160)
                     Toggle("Block", isOn: Binding(get: { resource.safety == .blocked }, set: { value in attempt { try broker.assign(resource.id, project: resource.projectID, safety: value ? .blocked : .ask) } })).frame(width: 80)
                 }.padding(.vertical, 3)
+            }
+        }.padding(12)
+    }
+    private var directories: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let scope = server.directoryBridge?.state {
+                let revoked = broker.agents.first(where: { $0.id == scope.agentId })?.revoked ?? true
+                Text("Prefrontal directory reader").font(.headline)
+                Text("Enrolled locally to read and disclose bounded Git metadata, documentation, and source evidence from these exact directories. It has no window project permissions and cannot write files. Newly created directories require local enrollment.")
+                    .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Text("\(scope.seeds.count) directories · " + (revoked ? "Revoked" : broker.endpoint == nil ? "Access stopped" : "Active"))
+                    Spacer()
+                    if !revoked { Button("Revoke directory access") { broker.revokeAgent(scope.agentId) } }
+                }
+                List(scope.seeds, id: \.id) { seed in Text(seed.path).font(.caption.monospaced()).textSelection(.enabled) }
+            } else {
+                Text("No directory reader is enrolled. Directory access requires explicit local enrollment.")
             }
         }.padding(12)
     }
@@ -88,7 +107,7 @@ struct AccessView: View {
                 HStack {
                     VStack(alignment: .leading) {
                         Text(agent.name)
-                        Text(broker.projects.filter { agent.projects.contains($0.id) }.map(\.name).joined(separator: ", ")).font(.caption)
+                        Text(server.directoryBridge?.state?.agentId == agent.id ? "Directory evidence only · see Directories" : broker.projects.filter { agent.projects.contains($0.id) }.map(\.name).joined(separator: ", ")).font(.caption)
                     }
                     Spacer()
                     if agent.revoked { Text("Revoked").foregroundStyle(.secondary) }

@@ -3,6 +3,28 @@ import ApplicationServices
 @testable import TerminalVelocity
 
 final class TerminalDuplicateTests: XCTestCase {
+    @MainActor func testFolderDecorationsAndSelectedTabEvidenceOnlyRemoveOwningWindow() {
+        let parent = AXUIElementCreateApplication(601)
+        let window = WindowEntry(id: "window", pid: 601, appName: "Terminal",
+            title: "terminal-velocity — Search titles across macOS terminals | terminal-velocity — zsh — 120×40",
+            icon: nil, element: parent, minimized: false, hidden: false, terminal: true)
+        var tab = WindowEntry(id: "tab", pid: 601, appName: "Terminal",
+            title: "~/Projects/terminal-velocity — Search titles across macOS terminals | terminal-velocity — zsh",
+            icon: nil, element: parent, minimized: false, hidden: false, terminal: true,
+            tab: AXUIElementCreateApplication(602))
+        let separate = WindowEntry(id: "separate", pid: 601, appName: "Terminal", title: window.title,
+            icon: nil, element: AXUIElementCreateApplication(603), minimized: false, hidden: false, terminal: true)
+        XCTAssertEqual(Set(ResultDeduplication.apply([window, tab, separate]).map(\.id)), ["tab", "separate"])
+        tab.title = "A different task"
+        XCTAssertEqual(ResultDeduplication.apply([window, tab]).count, 2)
+        tab.representedWindowTitle = window.title
+        XCTAssertEqual(Set(ResultDeduplication.apply([window, tab, separate]).map(\.id)), ["tab", "separate"])
+        // If filtering removes the tab, retain the window as a usable result.
+        XCTAssertEqual(ResultDeduplication.apply([window]).map(\.id), ["window"])
+        tab.representedWindowTitle = "An obsolete window title"
+        XCTAssertEqual(ResultDeduplication.apply([window, tab]).count, 2)
+    }
+
     @MainActor func testAgentTaskTitleDeduplicatesDifferentWindowAndTabDecorations() {
         let parent = AXUIElementCreateApplication(501)
         let window = WindowEntry(id: "window", pid: 501, appName: "Terminal",
