@@ -21,6 +21,22 @@ Native macOS menu-bar app. macOS 14+. The public build runs locally and makes no
 
 *Native app views rendered with fictional sample data. Regenerate with `bash scripts/screenshots.sh` on macOS.*
 
+## Onboarding preview
+
+Try Velocity before granting permissions. The upcoming onboarding includes a hands-on demo with fictional browser tabs, terminals, Messages conversations, Slack channels, and workspaces. Search **atlas** to find related work across apps, then choose a result with the keyboard or mouse.
+
+![Interactive Velocity demo showing a Chrome tab, Terminal tab, Messages conversation, and Slack channel](docs/screenshots/onboarding-demo.png)
+
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/onboarding-how-to.png" alt="Keyboard lesson: open search, type a title, use arrow keys and Return" /></td>
+<td width="50%"><img src="docs/screenshots/onboarding-shortcut.png" alt="Shortcut setup with Option–Space and an invitation to try a real search" /></td>
+</tr>
+<tr><td><strong>Learn by doing.</strong> Search, choose, and return to your work.</td><td><strong>Make it yours.</strong> Choose a shortcut that fits your Mac.</td></tr>
+</table>
+
+*Rendered from the native SwiftUI onboarding with fictional sample data. This previews the upcoming onboarding; the v0.1.13 download above does not include this flow yet.*
+
 ## Download
 
 Download the macOS Apple silicon build from [Releases](https://github.com/magicseth/velocity/releases). Unzip it and move **Terminal Velocity.app** to Applications. The app retains its original name and bundle identifier in this preview.
