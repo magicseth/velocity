@@ -26,6 +26,7 @@ final class SearchPanel: NSPanel {
     var objectiveHotKey: EventHotKeyRef?
     let objectiveFocus = ObjectiveFocus()
     let attentionNotifications = AttentionNotifications()
+    let julia = JuliaLink()
     var attentionCount = 0
     var eventHandler: EventHandlerRef?
     var keyboardMonitor: Any?
@@ -94,6 +95,8 @@ final class SearchPanel: NSPanel {
         status.button?.toolTip = "Terminal Velocity — search windows"
         menuBarFallback = MenuBarFallback(status: status)
         menuBarFallback?.menu = { [weak self] in self?.statusMenu() ?? NSMenu() }
+        julia.openEntry = { [weak self] entry in self?.choose(entry) }
+        julia.notice = { [weak self] text in self?.model.message = text }
         attentionNotifications.openAttention = { [weak self] in self?.showAttention() }
         attentionNotifications.openEntry = { [weak self] entry in
             guard let self else { return }
@@ -356,6 +359,7 @@ final class SearchPanel: NSPanel {
         add(pending > 0 ? "Agent Access (\(pending) requests)…" : "Agent Access…", #selector(showAgentAccess), to: menu)
         if Features.experimentalAgents { add("Switch Objectives…  ⌃⌥O", #selector(switchObjectives), to: menu) }
         add("Attention (\(attentionCount))", #selector(showAttention), to: menu)
+        add(julia.menuTitle, #selector(toggleJulia), to: menu)
         let notifications = NSMenuItem(title: "Agent Notifications", action: #selector(toggleNotifications), keyEquivalent: "")
         notifications.target = self; notifications.state = attentionNotifications.enabled ? .on : .off
         menu.addItem(notifications)
@@ -406,12 +410,22 @@ final class SearchPanel: NSPanel {
     @objc func testNotification() { attentionNotifications.test() }
     @objc func notificationSettings() { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")!) }
     func observeAttention() {
-        guard Features.experimentalAgents else { attentionNotifications.observe(model.all); return }
+        let entries = attentionEntries()
+        attentionNotifications.observe(entries)
+        julia.observe(entries)
+    }
+    /// What counts as "an agent needs him": the notifier and Julia's board see the same list.
+    func attentionEntries() -> [WindowEntry] {
+        guard Features.experimentalAgents else { return model.all }
         let doneWindows = Set(model.groups.filter { model.ledger.records[$0.id.uuidString]?.done == true }.flatMap(\.members))
-        attentionNotifications.observe(model.all.filter { entry in
+        return model.all.filter { entry in
             if let key = entry.windowKey, doneWindows.contains(key) { return false }
             return model.ledger.records[entry.memoryKey]?.done != true
-        })
+        }
+    }
+    @objc func toggleJulia() { julia.toggle() }
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls { julia.open(url) }
     }
     @objc func accessibility() { model.openAccessibility() }
     @objc func enableBrowserTabs() { model.enableBrowserTabs() }

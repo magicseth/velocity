@@ -12,6 +12,10 @@
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>VelocityExperimental</key><false/>
     <key>LSUIElement</key><true/>
+    <key>CFBundleURLTypes</key><array><dict>
+        <key>CFBundleURLName</key><string>Velocity focus link</string>
+        <key>CFBundleURLSchemes</key><array><string>velocity</string></array>
+    </dict></array>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSAccessibilityUsageDescription</key><string>Search window titles and focus the window you choose.</string>
     <key>NSAppleEventsUsageDescription</key><string>Read browser tab titles and URLs, switch or close tabs you choose, and send an exact link through Messages only after you approve its recipient and content. No webpage content or message history is read.</string>
