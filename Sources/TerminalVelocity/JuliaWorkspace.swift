@@ -64,9 +64,26 @@ enum JuliaWorkspace {
         let order = ["terminal": 0, "chat": 1, "document": 2, "browser": 3, "window": 4]
         return Array(out.sorted { (order[$0.kind] ?? 9, $0.title) < (order[$1.kind] ?? 9, $1.title) }.prefix(40))
     }
+    /// Per project, what belongs to it by name — plus a "*" bucket of the
+    /// terminals, tabs, chats and documents that matched NO project, so Julia
+    /// (Jev) can place what a name-match cannot. Plain windows stay local.
     static func manifest(projects: [String], entries: [WindowEntry]) -> [String: [JuliaWindow]] {
         var out: [String: [JuliaWindow]] = [:]
-        for project in projects { out[project] = windows(for: project, in: entries) }
+        var matched: Set<String> = []
+        for project in projects {
+            let list = windows(for: project, in: entries)
+            out[project] = list
+            for w in list { matched.insert(w.key) }
+        }
+        var seen: Set<String> = []
+        var loose: [JuliaWindow] = []
+        for entry in entries where entry.cachedTerminal == nil && entry.closedTab == nil && entry.launchURL == nil {
+            guard !matched.contains(entry.id), seen.insert(entry.id).inserted else { continue }
+            let k = kind(entry)
+            guard k != "window" else { continue }
+            loose.append(JuliaWindow(key: entry.id, kind: k, app: entry.appName, title: String(entry.title.prefix(140)), state: state(entry)))
+        }
+        out["*"] = Array(loose.prefix(40))
         return out
     }
     /// Which projects the board must hear about: changed lists, and lists that

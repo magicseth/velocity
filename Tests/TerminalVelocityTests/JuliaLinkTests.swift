@@ -105,6 +105,8 @@ final class JuliaWorkspaceTests: XCTestCase {
         XCTAssertTrue(JuliaWorkspace.windows(for: "ds", in: entries).isEmpty, "a two-letter name matches nothing")
         let group = JuliaWorkspace.group(for: "ds4", in: entries)
         XCTAssertEqual(group?.lead.id, "t2")
+        let manifest = JuliaWorkspace.manifest(projects: ["convexos"], entries: entries)
+        XCTAssertEqual(manifest["*"]?.map(\.key), ["t2"], "the ds4 terminal matched no project by name: it goes to the * bucket for Jev; the Finder window stays local")
     }
     func testOnlyChangesReachTheBoardAndAnEmptiedProjectIsForgotten() {
         let a = [JuliaWindow(key: "t1", kind: "terminal", app: "Terminal", title: "x")]
