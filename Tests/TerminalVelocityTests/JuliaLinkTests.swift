@@ -129,6 +129,16 @@ final class JuliaWorkspaceTests: XCTestCase {
         XCTAssertNil(JuliaWorkspace.terminalDirectory(home + "/definitely-not-here-\(UUID().uuidString)"))
         XCTAssertNil(JuliaWorkspace.terminalDirectory(nil))
     }
+    func testATitleThatReadsLikeASecretNeverLeavesTheMac() {
+        XCTAssertTrue(JuliaWorkspace.looksSensitive("Your login code is 286525 - seth@example.com - Mail"))
+        XCTAssertTrue(JuliaWorkspace.looksSensitive("Reset your password · GitHub"))
+        XCTAssertTrue(JuliaWorkspace.looksSensitive("483920 is your verification code"))
+        XCTAssertFalse(JuliaWorkspace.looksSensitive("Pull requests · magicseth/convexos"))
+        XCTAssertFalse(JuliaWorkspace.looksSensitive("~/Projects/convexos — zsh"))
+        let mail = entry("m1", app: "Google Chrome", title: "Your login code is 286525 - convexos - Mail", url: "https://mail.example.com/x")
+        XCTAssertTrue(JuliaWorkspace.windows(for: "convexos", in: [mail]).isEmpty, "even a name match does not ship a code")
+        XCTAssertTrue(JuliaWorkspace.manifest(projects: ["convexos"], entries: [mail])["*"]?.isEmpty ?? false)
+    }
     func testTheURLShapes() {
         XCTAssertEqual(JuliaWorkspace.query(in: URL(string: "velocity://foreground?project=convex%20os")!, "project"), "convex os")
         XCTAssertEqual(JuliaWorkspace.query(in: URL(string: "velocity://focus?project=x&window=901%3Awindow%3A5")!, "window"), "901:window:5")

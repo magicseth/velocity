@@ -46,6 +46,15 @@ enum JuliaWorkspace {
         case .none: return nil
         }
     }
+    /// A title that reads like a secret never leaves the Mac — a login code in a
+    /// mail subject, a password reset, a verification link. Matching is broad on
+    /// purpose: missing a window is cheap, shipping a code is not.
+    static func looksSensitive(_ title: String) -> Bool {
+        let t = title.lowercased()
+        let words = ["login code", "verification code", "security code", "one-time", "one time code", "passcode", "password", "2fa", "two-factor", "otp", "reset your", "confirm your email", "sign-in code", "sign in code"]
+        if words.contains(where: t.contains) { return true }
+        return t.range(of: #"code.*\d{4,8}|\d{4,8}.*code"#, options: .regularExpression) != nil
+    }
     static func kind(_ entry: WindowEntry) -> String {
         if entry.terminal { return "terminal" }
         if entry.browserTab != nil { return "browser" }
@@ -58,7 +67,7 @@ enum JuliaWorkspace {
         var seen: Set<String> = []
         var out: [JuliaWindow] = []
         for entry in entries where entry.cachedTerminal == nil && entry.closedTab == nil && entry.launchURL == nil {
-            guard mentions(entry, project), seen.insert(entry.id).inserted else { continue }
+            guard mentions(entry, project), !looksSensitive(entry.title), seen.insert(entry.id).inserted else { continue }
             out.append(JuliaWindow(key: entry.id, kind: kind(entry), app: entry.appName, title: String(entry.title.prefix(140)), state: state(entry)))
         }
         let order = ["terminal": 0, "chat": 1, "document": 2, "browser": 3, "window": 4]
@@ -78,7 +87,7 @@ enum JuliaWorkspace {
         var seen: Set<String> = []
         var loose: [JuliaWindow] = []
         for entry in entries where entry.cachedTerminal == nil && entry.closedTab == nil && entry.launchURL == nil {
-            guard !matched.contains(entry.id), seen.insert(entry.id).inserted else { continue }
+            guard !matched.contains(entry.id), !looksSensitive(entry.title), seen.insert(entry.id).inserted else { continue }
             let k = kind(entry)
             guard k != "window" else { continue }
             loose.append(JuliaWindow(key: entry.id, kind: k, app: entry.appName, title: String(entry.title.prefix(140)), state: state(entry)))
