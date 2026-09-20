@@ -280,7 +280,11 @@ enum JuliaKeychain {
                 }
                 for id in diff.resolve { _ = try await client.call(.resolve, ["token": token, "externalId": id]) }
                 for (project, windows) in workspaceChanges {
-                    let list = windows.map { ["key": $0.key, "kind": $0.kind, "app": $0.app, "title": $0.title] }
+                    let list: [[String: Any]] = windows.map { w in
+                        var d: [String: Any] = ["key": w.key, "kind": w.kind, "app": w.app, "title": w.title]
+                        if let state = w.state { d["state"] = state }
+                        return d
+                    }
                     _ = try await client.call(.workspace, ["token": token, "project": project, "windows": list, "source": "velocity"])
                 }
             } catch {

@@ -20,6 +20,8 @@ struct JuliaWindow: Equatable, Codable {
     let kind: String     // terminal | browser | chat | document | window
     let app: String
     let title: String
+    /// For a terminal agent: working | idle | needs_input — what its title says right now.
+    var state: String? = nil
 }
 
 enum JuliaWorkspace {
@@ -36,6 +38,14 @@ enum JuliaWorkspace {
         if let path = entry.browserTab?.url, let host = URL(string: path)?.host { hay.append(host) }
         return hay.contains { squash($0).contains(needle) }
     }
+    static func state(_ entry: WindowEntry) -> String? {
+        switch entry.attention {
+        case .working: return "working"
+        case .idle: return "idle"
+        case .needsInput: return "needs_input"
+        case .none: return nil
+        }
+    }
     static func kind(_ entry: WindowEntry) -> String {
         if entry.terminal { return "terminal" }
         if entry.browserTab != nil { return "browser" }
@@ -49,7 +59,7 @@ enum JuliaWorkspace {
         var out: [JuliaWindow] = []
         for entry in entries where entry.cachedTerminal == nil && entry.closedTab == nil && entry.launchURL == nil {
             guard mentions(entry, project), seen.insert(entry.id).inserted else { continue }
-            out.append(JuliaWindow(key: entry.id, kind: kind(entry), app: entry.appName, title: String(entry.title.prefix(140))))
+            out.append(JuliaWindow(key: entry.id, kind: kind(entry), app: entry.appName, title: String(entry.title.prefix(140)), state: state(entry)))
         }
         let order = ["terminal": 0, "chat": 1, "document": 2, "browser": 3, "window": 4]
         return Array(out.sorted { (order[$0.kind] ?? 9, $0.title) < (order[$1.kind] ?? 9, $1.title) }.prefix(40))
