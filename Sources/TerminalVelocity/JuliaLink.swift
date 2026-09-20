@@ -283,6 +283,6 @@ enum JuliaKeychain {
         }
         // Straight to the terminal. Velocity itself never comes forward: the
         // board asked for that window, not for the palette.
-        if !WindowActivation.focus(entry) { openEntry?(entry) }
+        if !WindowCatalog.focus(entry) { openEntry?(entry) }
     }
 }
