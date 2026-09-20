@@ -94,7 +94,8 @@ struct JuliaClient {
     enum Function: String {
         case createCode = "pairing:createCode", status = "pairing:status"
         case report = "attention:report", resolve = "attention:resolve"
-        var kind: String { self == .status ? "query" : "mutation" }
+        case projects = "attention:byProject", workspace = "attention:workspace"
+        var kind: String { self == .status || self == .projects ? "query" : "mutation" }
     }
     struct Failure: LocalizedError { let message: String; var errorDescription: String? { message } }
     static let defaultEndpoint = "https://hidden-kudu-77.convex.cloud"
@@ -157,6 +158,14 @@ enum JuliaKeychain {
     private(set) var state: State = .unpaired
     private(set) var token = ""
     var openEntry: ((WindowEntry) -> Void)?
+    /// The palette's group focus: raise these, this one on top.
+    var foreground: (([WindowEntry], WindowEntry) async -> Bool)?
+    /// Everything on the Mac right now (for jump-by-project and foreground).
+    var allEntries: (() -> [WindowEntry])?
+    private var projectTitles: [String] = []
+    private var projectsFetchedAt = Date.distantPast
+    private var workspace: [String: [JuliaWindow]] = [:]
+    private var pendingWorkspace: [String: [JuliaWindow]]?
     var notice: ((String) -> Void)?
     var changed: (() -> Void)?
     private var reporter = JuliaReporter()
@@ -225,20 +234,39 @@ enum JuliaKeychain {
         }
     }
 
-    /// Called after every scan with the same entries the notifier sees.
-    func observe(_ entries: [WindowEntry]) {
+    /// Called after every scan: `attention` is what the notifier sees (done
+    /// objectives filtered out); `all` is every window, for the per-project manifest.
+    func observe(attention entries: [WindowEntry], all: [WindowEntry] = []) {
         guard state == .paired else { return }
         let reports = JuliaReporter.reports(entries) { NSRunningApplication(processIdentifier: $0)?.launchDate }
         pendingReports = reports
+        if !projectTitles.isEmpty {
+            let current = JuliaWorkspace.manifest(projects: projectTitles, entries: all)
+            let changed = JuliaWorkspace.changes(previous: workspace, current: current)
+            if !changed.isEmpty { pendingWorkspace = (pendingWorkspace ?? [:]).merging(changed) { _, new in new } }
+            workspace = current
+        }
+        if Date().timeIntervalSince(projectsFetchedAt) > 60 { refreshProjects() }
         sync()
     }
 
+    private func refreshProjects() {
+        projectsFetchedAt = Date()
+        Task { @MainActor [weak self] in
+            guard let self, let client = try? JuliaClient() else { return }
+            guard let value = try? await client.call(.projects, ["token": token]) as? [String: Any],
+                  let projects = value["projects"] as? [[String: Any]] else { return }
+            projectTitles = projects.compactMap { $0["title"] as? String }
+        }
+    }
+
     private func sync() {
-        guard !syncing, let reports = pendingReports else { return }
-        pendingReports = nil
-        let diff = reporter.observe(reports)
+        guard !syncing, pendingReports != nil || pendingWorkspace != nil else { return }
+        let diff = pendingReports.map { reporter.observe($0) } ?? JuliaReportDiff()
+        let workspaceChanges = pendingWorkspace ?? [:]
+        pendingReports = nil; pendingWorkspace = nil
         persist()
-        guard !diff.report.isEmpty || !diff.resolve.isEmpty else { return }
+        guard !diff.report.isEmpty || !diff.resolve.isEmpty || !workspaceChanges.isEmpty else { return }
         syncing = true
         Task { @MainActor [weak self] in
             defer { self?.syncing = false; self?.sync() }
@@ -251,10 +279,15 @@ enum JuliaKeychain {
                     _ = try await client.call(.report, args)
                 }
                 for id in diff.resolve { _ = try await client.call(.resolve, ["token": token, "externalId": id]) }
+                for (project, windows) in workspaceChanges {
+                    let list = windows.map { ["key": $0.key, "kind": $0.kind, "app": $0.app, "title": $0.title] }
+                    _ = try await client.call(.workspace, ["token": token, "project": project, "windows": list, "source": "velocity"])
+                }
             } catch {
                 // The next scan re-reports whatever still differs; the board's
                 // 24h budget sweeps anything this Mac never manages to resolve.
                 reporter = JuliaReporter(latch: reporter.latch)
+                workspace = [:]
                 notice?(error.localizedDescription)
             }
         }
@@ -276,6 +309,24 @@ enum JuliaKeychain {
         return handle
     }
     func open(_ url: URL) {
+        guard url.scheme == "velocity" else { return }
+        let entries = allEntries?() ?? []
+        // velocity://foreground?project=X — everything for that project, at once.
+        if url.host == "foreground", let project = JuliaWorkspace.query(in: url, "project") {
+            guard let group = JuliaWorkspace.group(for: project, in: entries) else {
+                notice?("Nothing is open for \(project) right now."); return
+            }
+            Task { @MainActor [weak self] in
+                if await self?.foreground?(group.entries, group.lead) != true { _ = WindowCatalog.focus(group.lead) }
+            }
+            return
+        }
+        // velocity://focus?project=X&window=<key> — one of them.
+        if url.host == "focus", let key = JuliaWorkspace.query(in: url, "window") {
+            guard let entry = entries.first(where: { $0.id == key }) else { notice?("That window is no longer open."); return }
+            if !WindowCatalog.focus(entry) { openEntry?(entry) }
+            return
+        }
         guard let handle = Self.handle(in: url) else { return }
         guard let destination = JuliaJumpHandle.decode(handle) else { notice?("That jump link isn’t one Velocity made."); return }
         guard let entry = destination.liveEntry() else {

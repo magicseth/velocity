@@ -74,3 +74,46 @@ final class JuliaLinkTests: XCTestCase {
         XCTAssertNil(JuliaLink.handle(in: URL(string: "velocity://focus")!))
     }
 }
+
+final class JuliaWorkspaceTests: XCTestCase {
+    func entry(_ id: String, app: String, title: String, terminal: Bool = false, path: String? = nil, url: String? = nil) -> WindowEntry {
+        var e = WindowEntry(id: id, pid: 900, appName: app, title: title, icon: nil, element: nil,
+            minimized: false, hidden: false, terminal: terminal)
+        e.documentPath = path
+        if let url {
+            e.browserTab = BrowserTab(browserID: "com.google.Chrome", windowID: 1, tabID: 1, title: title, url: url,
+                minimized: false, windowTitle: title, index: 0)
+            e.browser = true
+        }
+        return e
+    }
+    func testWindowsAreMatchedToAProjectByWhatTheySayAboutThemselves() {
+        let entries = [
+            entry("t1", app: "Terminal", title: "~/Projects/convexos — zsh", terminal: true),
+            entry("b1", app: "Google Chrome", title: "Pull requests · magicseth/convexos", url: "https://github.com/magicseth/convexos/pulls"),
+            entry("d1", app: "Xcode", title: "AppModel.swift", path: "/Users/seth/Projects/convexos/apps/mac/AppModel.swift"),
+            entry("x1", app: "Finder", title: "Downloads"),
+            entry("t2", app: "Terminal", title: "~/Projects/ds4 — zsh", terminal: true),
+        ]
+        let windows = JuliaWorkspace.windows(for: "convexos", in: entries)
+        XCTAssertEqual(windows.map(\.key), ["t1", "d1", "b1"], "terminals lead, then documents, then tabs")
+        XCTAssertEqual(windows.map(\.kind), ["terminal", "document", "browser"])
+        XCTAssertEqual(JuliaWorkspace.windows(for: "Convex OS", in: entries).map(\.key), ["t1", "d1", "b1"], "squash: spacing and case never matter")
+        XCTAssertTrue(JuliaWorkspace.windows(for: "ds", in: entries).isEmpty, "a two-letter name matches nothing")
+        let group = JuliaWorkspace.group(for: "ds4", in: entries)
+        XCTAssertEqual(group?.lead.id, "t2")
+    }
+    func testOnlyChangesReachTheBoardAndAnEmptiedProjectIsForgotten() {
+        let a = [JuliaWindow(key: "t1", kind: "terminal", app: "Terminal", title: "x")]
+        let previous = ["convexos": a, "ds4": a]
+        let current = ["convexos": a, "waveshare": a]
+        let changes = JuliaWorkspace.changes(previous: previous, current: current)
+        XCTAssertEqual(changes["waveshare"], a)
+        XCTAssertEqual(changes["ds4"], [], "went away: the board forgets it")
+        XCTAssertNil(changes["convexos"], "unchanged: silence")
+    }
+    func testTheURLShapes() {
+        XCTAssertEqual(JuliaWorkspace.query(in: URL(string: "velocity://foreground?project=convex%20os")!, "project"), "convex os")
+        XCTAssertEqual(JuliaWorkspace.query(in: URL(string: "velocity://focus?project=x&window=901%3Awindow%3A5")!, "window"), "901:window:5")
+    }
+}

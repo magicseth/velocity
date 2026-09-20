@@ -97,6 +97,8 @@ final class SearchPanel: NSPanel {
         menuBarFallback?.menu = { [weak self] in self?.statusMenu() ?? NSMenu() }
         julia.openEntry = { [weak self] entry in self?.choose(entry) }
         julia.notice = { [weak self] text in self?.model.message = text }
+        julia.allEntries = { [weak self] in self?.model.all ?? [] }
+        julia.foreground = { [weak self] entries, lead in await self?.focusGroup(entries, selected: lead) ?? false }
         attentionNotifications.openAttention = { [weak self] in self?.showAttention() }
         attentionNotifications.openEntry = { [weak self] entry in
             guard let self else { return }
@@ -412,7 +414,7 @@ final class SearchPanel: NSPanel {
     func observeAttention() {
         let entries = attentionEntries()
         attentionNotifications.observe(entries)
-        julia.observe(entries)
+        julia.observe(attention: entries, all: model.all)
     }
     /// What counts as "an agent needs him": the notifier and Julia's board see the same list.
     func attentionEntries() -> [WindowEntry] {
