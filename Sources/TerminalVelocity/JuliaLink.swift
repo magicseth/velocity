@@ -283,6 +283,7 @@ enum JuliaKeychain {
                     let list: [[String: Any]] = windows.map { w in
                         var d: [String: Any] = ["key": w.key, "kind": w.kind, "app": w.app, "title": w.title]
                         if let state = w.state { d["state"] = state }
+                        if let task = w.task { d["task"] = task }
                         return d
                     }
                     _ = try await client.call(.workspace, ["token": token, "project": project, "windows": list, "source": "velocity"])

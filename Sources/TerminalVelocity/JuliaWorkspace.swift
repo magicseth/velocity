@@ -22,6 +22,8 @@ struct JuliaWindow: Equatable, Codable {
     let title: String
     /// For a terminal agent: working | idle | needs_input — what its title says right now.
     var state: String? = nil
+    /// For a terminal agent: the task its title names — what is being worked on.
+    var task: String? = nil
 }
 
 enum JuliaWorkspace {
@@ -68,7 +70,7 @@ enum JuliaWorkspace {
         var out: [JuliaWindow] = []
         for entry in entries where entry.cachedTerminal == nil && entry.closedTab == nil && entry.launchURL == nil {
             guard mentions(entry, project), !looksSensitive(entry.title), seen.insert(entry.id).inserted else { continue }
-            out.append(JuliaWindow(key: entry.id, kind: kind(entry), app: entry.appName, title: String(entry.title.prefix(140)), state: state(entry)))
+            out.append(JuliaWindow(key: entry.id, kind: kind(entry), app: entry.appName, title: String(entry.title.prefix(140)), state: state(entry), task: entry.agentTaskTitle.map { String($0.prefix(160)) }))
         }
         let order = ["terminal": 0, "chat": 1, "document": 2, "browser": 3, "window": 4]
         return Array(out.sorted { (order[$0.kind] ?? 9, $0.title) < (order[$1.kind] ?? 9, $1.title) }.prefix(40))
@@ -90,7 +92,7 @@ enum JuliaWorkspace {
             guard !matched.contains(entry.id), !looksSensitive(entry.title), seen.insert(entry.id).inserted else { continue }
             let k = kind(entry)
             guard k != "window" else { continue }
-            loose.append(JuliaWindow(key: entry.id, kind: k, app: entry.appName, title: String(entry.title.prefix(140)), state: state(entry)))
+            loose.append(JuliaWindow(key: entry.id, kind: k, app: entry.appName, title: String(entry.title.prefix(140)), state: state(entry), task: entry.agentTaskTitle.map { String($0.prefix(160)) }))
         }
         out["*"] = Array(loose.prefix(40))
         return out

@@ -100,6 +100,7 @@ final class JuliaWorkspaceTests: XCTestCase {
         XCTAssertEqual(windows.map(\.kind), ["terminal", "document", "browser"])
         let busy = entry("t9", app: "Terminal", title: "◐ Fixing the strip — claude", terminal: true)
         XCTAssertEqual(JuliaWorkspace.state(busy), "working", "a spinner title is an agent at work")
+        XCTAssertEqual(JuliaWorkspace.windows(for: "strip", in: [busy]).first?.task, "Fixing the strip", "the task rides along: what is being worked on")
         XCTAssertNil(JuliaWorkspace.state(entries[0]), "a plain shell has no agent state")
         XCTAssertEqual(JuliaWorkspace.windows(for: "Convex OS", in: entries).map(\.key), ["t1", "d1", "b1"], "squash: spacing and case never matter")
         XCTAssertTrue(JuliaWorkspace.windows(for: "ds", in: entries).isEmpty, "a two-letter name matches nothing")
