@@ -281,13 +281,8 @@ enum JuliaKeychain {
         guard let entry = destination.liveEntry() else {
             notice?("That terminal changed or closed since Julia was told about it."); return
         }
-        NSApp.activate()
-        Task { @MainActor [weak self] in
-            for _ in 0..<20 {
-                if NSApp.isActive { break }
-                try? await Task.sleep(for: .milliseconds(25))
-            }
-            self?.openEntry?(entry)
-        }
+        // Straight to the terminal. Velocity itself never comes forward: the
+        // board asked for that window, not for the palette.
+        if !WindowActivation.focus(entry) { openEntry?(entry) }
     }
 }
