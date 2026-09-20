@@ -53,7 +53,7 @@ enum JuliaWorkspace {
         let t = title.lowercased()
         let words = ["login code", "verification code", "security code", "one-time", "one time code", "passcode", "password", "2fa", "two-factor", "otp", "reset your", "confirm your email", "sign-in code", "sign in code"]
         if words.contains(where: t.contains) { return true }
-        return t.range(of: #"code.*\d{4,8}|\d{4,8}.*code"#, options: .regularExpression) != nil
+        return t.range(of: #"\bcode\b.*\b\d{4,8}\b|\b\d{4,8}\b.*\bcode\b"#, options: .regularExpression) != nil
     }
     static func kind(_ entry: WindowEntry) -> String {
         if entry.terminal { return "terminal" }
