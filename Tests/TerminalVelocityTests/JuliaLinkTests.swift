@@ -25,6 +25,19 @@ final class JuliaLinkTests: XCTestCase {
         XCTAssertNil(JuliaJumpHandle.decode("not a handle"))
         XCTAssertNil(JuliaReporter.reports([entry]) { _ in nil }.first?.jumpHandle, "no launch date, no handle — never a guess")
     }
+    func testTerminalChromeNeverBecomesTheProject() {
+        // Terminal.app on this Mac prefixes "magicseth — " and appends " — sleep 600".
+        let chrome = WindowEntry(id: "one", pid: 801, appName: "Terminal",
+            title: "magicseth — ~/Projects/convexos — [ ! ] Action Required | Prove the Velocity loop | convexos — codex — sleep 600",
+            icon: nil, element: nil, minimized: false, hidden: false, terminal: true)
+        XCTAssertEqual(AttentionPresentation(chrome).project, "convexos")
+        XCTAssertEqual(AttentionPresentation(chrome).task, "Prove the Velocity loop")
+        let bare = WindowEntry(id: "two", pid: 801, appName: "Terminal",
+            title: "~/Projects/ds4 — [ ! ] Action Required | Pick a port — claude",
+            icon: nil, element: nil, minimized: false, hidden: false, terminal: true)
+        XCTAssertEqual(AttentionPresentation(bare).project, "ds4", "no tail: the folder prefix still works")
+        XCTAssertEqual(AttentionPresentation(bare).task, "Pick a port")
+    }
     func testTheBoardIsOnlyToldAboutChangesAndResolvesAfterTheLatch() {
         var reporter = JuliaReporter(latch: 10)
         let t0 = Date(timeIntervalSince1970: 1000)
