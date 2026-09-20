@@ -325,6 +325,25 @@ enum JuliaKeychain {
             }
             return
         }
+        // velocity://terminal?path=/abs/dir — a new terminal in that project.
+        if url.host == "terminal" {
+            guard let dir = JuliaWorkspace.terminalDirectory(JuliaWorkspace.query(in: url, "path")) else {
+                notice?("That project has no folder on this Mac to open a terminal in."); return
+            }
+            let running = NSWorkspace.shared.runningApplications.compactMap { app -> (pid: pid_t, bundle: String)? in
+                guard let id = app.bundleIdentifier, WindowCatalog.terminalIDs.contains(id) else { return nil }
+                return (app.processIdentifier, id)
+            }
+            let bundle = JuliaWorkspace.preferredTerminal(entries, running: running)
+            guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle)
+                ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else { return }
+            let config = NSWorkspace.OpenConfiguration()
+            config.createsNewApplicationInstance = false
+            NSWorkspace.shared.open([dir], withApplicationAt: app, configuration: config) { [weak self] _, error in
+                if let error { Task { @MainActor in self?.notice?("Couldn’t open a terminal there: " + error.localizedDescription) } }
+            }
+            return
+        }
         // velocity://focus?project=X&window=<key> — one of them.
         if url.host == "focus", let key = JuliaWorkspace.query(in: url, "window") {
             guard let entry = entries.first(where: { $0.id == key }) else { notice?("That window is no longer open."); return }

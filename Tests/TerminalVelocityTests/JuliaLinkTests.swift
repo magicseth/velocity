@@ -115,6 +115,18 @@ final class JuliaWorkspaceTests: XCTestCase {
         XCTAssertEqual(changes["ds4"], [], "went away: the board forgets it")
         XCTAssertNil(changes["convexos"], "unchanged: silence")
     }
+    func testANewTerminalOpensInHisTerminalAndOnlyInARealFolderUnderHome() {
+        let t = WindowEntry(id: "t", pid: 5, appName: "Ghostty", title: "x", icon: nil, element: nil, minimized: false, hidden: false, terminal: true)
+        let u = WindowEntry(id: "u", pid: 6, appName: "Terminal", title: "y", icon: nil, element: nil, minimized: false, hidden: false, terminal: true)
+        let running: [(pid: pid_t, bundle: String)] = [(5, "com.mitchellh.ghostty"), (6, "com.apple.Terminal")]
+        XCTAssertEqual(JuliaWorkspace.preferredTerminal([t, t, u], running: running), "com.mitchellh.ghostty")
+        XCTAssertEqual(JuliaWorkspace.preferredTerminal([], running: running), "com.apple.Terminal")
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        XCTAssertNotNil(JuliaWorkspace.terminalDirectory(home + "/Library"))
+        XCTAssertNil(JuliaWorkspace.terminalDirectory("/etc"), "outside home: never")
+        XCTAssertNil(JuliaWorkspace.terminalDirectory(home + "/definitely-not-here-\(UUID().uuidString)"))
+        XCTAssertNil(JuliaWorkspace.terminalDirectory(nil))
+    }
     func testTheURLShapes() {
         XCTAssertEqual(JuliaWorkspace.query(in: URL(string: "velocity://foreground?project=convex%20os")!, "project"), "convex os")
         XCTAssertEqual(JuliaWorkspace.query(in: URL(string: "velocity://focus?project=x&window=901%3Awindow%3A5")!, "window"), "901:window:5")

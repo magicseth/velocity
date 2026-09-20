@@ -84,6 +84,25 @@ enum JuliaWorkspace {
         guard let lead = members.first(where: \.terminal) ?? members.first else { return nil }
         return (members, lead)
     }
+    /// The terminal he actually uses: the app behind most of his terminal windows,
+    /// else Terminal.app. Bundle ids only; the caller resolves the app.
+    static func preferredTerminal(_ entries: [WindowEntry], running: [(pid: pid_t, bundle: String)]) -> String {
+        var counts: [String: Int] = [:]
+        let byPID = Dictionary(running.map { ($0.pid, $0.bundle) }, uniquingKeysWith: { a, _ in a })
+        for entry in entries where entry.terminal {
+            if let bundle = byPID[entry.pid] { counts[bundle, default: 0] += 1 }
+        }
+        return counts.max { $0.value < $1.value }?.key ?? "com.apple.Terminal"
+    }
+    /// Only a real directory under his home ever becomes a terminal's cwd.
+    static func terminalDirectory(_ raw: String?) -> URL? {
+        guard let raw, !raw.isEmpty else { return nil }
+        let url = URL(fileURLWithPath: raw).standardizedFileURL
+        let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path
+        var isDir: ObjCBool = false
+        guard url.path.hasPrefix(home + "/"), FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else { return nil }
+        return url
+    }
     static func query(in url: URL, _ name: String) -> String? {
         URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == name }?.value
     }
