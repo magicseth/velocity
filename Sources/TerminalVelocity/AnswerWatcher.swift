@@ -154,8 +154,14 @@ final class AnswerWatcher {
     }
 
     /// Harness chatter is not his words: injected reminders, command wrappers, interrupts.
+    /// A pasted screenshot arrives as "[Image #3]" and "[Image: source: /Users/…/9.png]".
+    /// Those are attachments, not his words — and the second leaks a local path.
+    nonisolated static func withoutAttachments(_ text: String) -> String {
+        text.replacingOccurrences(of: #"\[Image[^\]]*\]"#, with: "", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     nonisolated static func isHis(_ text: String) -> Bool {
-        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let t = withoutAttachments(text)
         return !t.isEmpty && !t.hasPrefix("<") && !t.hasPrefix("[Request interrupted") && !t.hasPrefix("Caveat:") && !t.hasPrefix("This session is being continued")
     }
 
@@ -189,7 +195,10 @@ final class AnswerWatcher {
                     if parts.contains(where: { ($0["type"] as? String) == "tool_result" }) { continue }   // a tool talking, not him
                     text = parts.filter { ($0["type"] as? String) == "text" }.compactMap { $0["text"] as? String }.joined(separator: "\n")
                 }
+                let sentImage = text.contains("[Image")
+                if sentImage, withoutAttachments(text).isEmpty { text = "(a screenshot, no words)" }
                 guard isHis(text) else { continue }
+                text = withoutAttachments(text)
                 question = (text, at, (j["uuid"] as? String) ?? String(Int(at))); questionIndex = index
                 answer = nil; answeredAt = nil; done = false                                  // a new question: start over
             } else if kind == "assistant", question != nil {

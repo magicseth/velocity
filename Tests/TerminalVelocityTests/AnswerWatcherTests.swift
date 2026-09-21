@@ -50,6 +50,12 @@ final class AnswerWatcherTests: XCTestCase {
         XCTAssertEqual(again.0, e, "reading from the remembered offset gives the same exchange, without re-reading the file")
         XCTAssertEqual(again.1, offset)
     }
+    func testAScreenshotIsAnAttachmentNotHisWords() {
+        let both = [user("[Image #10] i clicked open it but it didn't work [Image: source: /Users/x/.claude/image-cache/10.png]", "2026-09-21T10:00:00.000Z"), assistant("On it.", "2026-09-21T10:00:05.000Z", stop: "end_turn")]
+        XCTAssertEqual(AnswerWatcher.claude(both, path: "/x/S.jsonl")?.question, "i clicked open it but it didn't work", "no placeholder, no local path")
+        let only = [user("[Image #9] [Image: source: /Users/x/.claude/image-cache/9.png]", "2026-09-21T10:00:00.000Z"), assistant("Seen.", "2026-09-21T10:00:05.000Z", stop: "end_turn")]
+        XCTAssertEqual(AnswerWatcher.claude(only, path: "/x/S.jsonl")?.question, "(a screenshot, no words)")
+    }
     func testAProgrammaticClaudeRunIsNotAQuestionHeAsked() {
         let sdk = line(["type": "user", "uuid": "p1", "entrypoint": "sdk-cli", "timestamp": "2026-09-21T10:00:00.000Z", "message": ["role": "user", "content": "You are an expert software architect providing a codebase walkthrough"]])
         let done = line(["type": "assistant", "entrypoint": "sdk-cli", "timestamp": "2026-09-21T10:01:00.000Z", "message": ["role": "assistant", "stop_reason": "end_turn", "content": [["type": "text", "text": "Here is the walkthrough."]]]])

@@ -253,6 +253,19 @@ enum JuliaKeychain {
         Task { _ = try? await client.call(.exchange, args) }
     }
 
+    /// The same tab of the same running process, whatever its title says now.
+    static func sameTab(_ d: AttentionDestination, in entries: [WindowEntry]) -> WindowEntry? {
+        guard NSRunningApplication(processIdentifier: d.pid)?.launchDate == d.launch else { return nil }
+        let tabs = entries.filter { $0.pid == d.pid && $0.id == d.entryID }
+        if tabs.count == 1 { return tabs[0] }
+        let inWindow = entries.filter { $0.pid == d.pid && $0.windowKey == d.windowKey }
+        return inWindow.count == 1 ? inWindow[0] : nil
+    }
+    static func terminal(inFolder sig: String, in entries: [WindowEntry]) -> WindowEntry? {
+        let here = entries.filter { $0.terminal && JuliaWorkspace.signature($0) == sig.lowercased() }
+        return here.first(where: { $0.attention != .none }) ?? here.first
+    }
+
     /// The terminal sitting in that folder — preferring one whose title shows an agent.
     static func jumpHandle(forFolder cwd: String, in entries: [WindowEntry]) -> String? {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -399,8 +412,15 @@ enum JuliaKeychain {
         }
         guard let handle = Self.handle(in: url) else { return }
         guard let destination = JuliaJumpHandle.decode(handle) else { notice?("That jump link isn’t one Velocity made."); return }
-        guard let entry = destination.liveEntry() else {
-            notice?("That terminal changed or closed since Julia was told about it."); return
+        // THE TAB, NOT ITS TITLE. A handle remembers the title it was minted under, and
+        // that is right for "Action Required" (the title sits still while it waits). But
+        // an agent's title changes every few seconds — a handle minted while it WORKED
+        // matched nothing by the time he clicked Open, and nothing happened. So: the
+        // exact match first; then the same tab by identity; then any terminal in the
+        // conversation's folder. Never a different process, never by title across windows.
+        guard let entry = destination.liveEntry() ?? Self.sameTab(destination, in: entries)
+                ?? JuliaWorkspace.query(in: url, "sig").flatMap({ Self.terminal(inFolder: $0, in: entries) }) else {
+            notice?("That terminal closed since Julia was told about it."); return
         }
         // Straight to the terminal. Velocity itself never comes forward: the
         // board asked for that window, not for the palette.

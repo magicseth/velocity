@@ -135,6 +135,13 @@ final class JuliaWorkspaceTests: XCTestCase {
         XCTAssertEqual(m["*"]?.map(\.key), ["q"], "what no name matches still goes to Julia's judge")
         XCTAssertEqual(JuliaWorkspace.group(for: "ai budget", names: ["ai budget", "integrated-ai"], in: [term])?.lead.id, "t", "and Foreground all raises it")
     }
+    @MainActor func testOpeningAnAnswerFindsTheFolderEvenAfterTheTitleChanged() {
+        // The handle was minted while the agent WORKED ("◐ Fixing…"); by the click the title reads "✳ Done".
+        let now = entry("55:window:9:tab:3", app: "Terminal", title: "~/Projects/convexos — ✳ Done — claude", terminal: true)
+        let other = entry("55:window:9:tab:4", app: "Terminal", title: "~/Projects/ds4 — zsh", terminal: true)
+        XCTAssertEqual(JuliaLink.terminal(inFolder: "term:~/projects/convexos", in: [other, now])?.id, now.id)
+        XCTAssertNil(JuliaLink.terminal(inFolder: "term:~/projects/nowhere", in: [other, now]))
+    }
     func testOnlyChangesReachTheBoardAndAnEmptiedProjectIsForgotten() {
         let a = [JuliaWindow(key: "t1", kind: "terminal", app: "Terminal", title: "x")]
         let previous = ["convexos": a, "ds4": a]
