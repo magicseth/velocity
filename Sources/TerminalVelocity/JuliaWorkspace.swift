@@ -139,7 +139,10 @@ enum JuliaWorkspace {
             guard k != "window" else { continue }
             loose.append(JuliaWindow(key: entry.id, kind: k, app: entry.appName, title: String(entry.title.prefix(140)), state: state(entry), task: entry.agentTaskTitle.map { String($0.prefix(160)) }, sig: signature(entry)))
         }
-        out["*"] = Array(loose.prefix(40))
+        // Terminals first: they are where his agents are. (Forty chat windows once filled
+        // the bucket and every unsorted terminal fell off the end.)
+        let rank = ["terminal": 0, "document": 1, "browser": 2, "chat": 3]
+        out["*"] = Array(loose.sorted { (rank[$0.kind] ?? 9) < (rank[$1.kind] ?? 9) }.prefix(40))
         return out
     }
     /// Which projects the board must hear about: changed lists, and lists that

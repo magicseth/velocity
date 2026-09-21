@@ -261,9 +261,18 @@ enum JuliaKeychain {
         let inWindow = entries.filter { $0.pid == d.pid && $0.windowKey == d.windowKey }
         return inWindow.count == 1 ? inWindow[0] : nil
     }
+    /// The terminal for a conversation's folder. Exact first; then the same folder NAME
+    /// (a tab titled "convex-app" for ~/Projects/what2do/convex-app — Open did nothing);
+    /// then a terminal sitting in a parent or child of that folder. Never a random one.
     static func terminal(inFolder sig: String, in entries: [WindowEntry]) -> WindowEntry? {
-        let here = entries.filter { $0.terminal && JuliaWorkspace.signature($0) == sig.lowercased() }
-        return here.first(where: { $0.attention != .none }) ?? here.first
+        let want = sig.lowercased()
+        let terms = entries.filter(\.terminal)
+        let pick: ([WindowEntry]) -> WindowEntry? = { $0.first(where: { $0.attention != .none }) ?? $0.first }
+        if let e = pick(terms.filter { JuliaWorkspace.signature($0) == want }) { return e }
+        let name = String(want.split(separator: "/").last ?? Substring(want.dropFirst(5)))
+        guard name.count >= 3 else { return nil }
+        if let e = pick(terms.filter { let s = JuliaWorkspace.signature($0); return s == "term:" + name || s.hasSuffix("/" + name) }) { return e }
+        return pick(terms.filter { let s = JuliaWorkspace.signature($0); return s.hasPrefix(want + "/") || (want.hasPrefix(s + "/") && s.count > 8) })
     }
 
     /// The terminal sitting in that folder — preferring one whose title shows an agent.

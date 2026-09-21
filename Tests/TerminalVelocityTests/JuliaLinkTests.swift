@@ -141,6 +141,11 @@ final class JuliaWorkspaceTests: XCTestCase {
         let other = entry("55:window:9:tab:4", app: "Terminal", title: "~/Projects/ds4 — zsh", terminal: true)
         XCTAssertEqual(JuliaLink.terminal(inFolder: "term:~/projects/convexos", in: [other, now])?.id, now.id)
         XCTAssertNil(JuliaLink.terminal(inFolder: "term:~/projects/nowhere", in: [other, now]))
+        // A conversation in ~/Projects/what2do/convex-app; the tab is titled just "convex-app".
+        let tab = entry("55:window:9:tab:7", app: "Terminal", title: "convex-app — ✳ Investigate — claude", terminal: true)
+        XCTAssertEqual(JuliaLink.terminal(inFolder: "term:~/projects/what2do/convex-app", in: [other, tab])?.id, tab.id, "same folder NAME is enough")
+        let parent = entry("55:window:9:tab:8", app: "Terminal", title: "~/Projects/what2do — zsh", terminal: true)
+        XCTAssertEqual(JuliaLink.terminal(inFolder: "term:~/projects/what2do/convex-app", in: [other, parent])?.id, parent.id, "else a terminal in the parent folder")
     }
     func testOnlyChangesReachTheBoardAndAnEmptiedProjectIsForgotten() {
         let a = [JuliaWindow(key: "t1", kind: "terminal", app: "Terminal", title: "x")]
