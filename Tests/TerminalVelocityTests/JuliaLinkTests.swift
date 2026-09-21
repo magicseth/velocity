@@ -117,6 +117,13 @@ final class JuliaWorkspaceTests: XCTestCase {
         let tab = entry("b", app: "Google Chrome", title: "Pull request #12", url: "https://github.com/get-convex/ai-budget/pull/12?x=1")
         XCTAssertEqual(JuliaWorkspace.signature(tab), "tab:github.com/get-convex/ai-budget", "site + repo, never the query string")
         XCTAssertEqual(JuliaWorkspace.windows(for: "integrated-ai", in: [term]).first?.sig, "term:~/projects/integrated-ai")
+        // A terminal with a documentPath and no path in its title must NOT collapse to its parent folder:
+        // that gave every terminal under ~/Projects one shared signature, and one placement moved them all.
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let a = entry("a", app: "Terminal", title: "mcpfix — ✳ PR review and fixes — node", terminal: true, path: home + "/Projects/mcpfix")
+        let b = entry("b2", app: "Terminal", title: "waveshare — ✳ LCD car game — node", terminal: true, path: home + "/Projects/waveshare")
+        XCTAssertEqual(JuliaWorkspace.signature(a), "term:~/projects/mcpfix")
+        XCTAssertNotEqual(JuliaWorkspace.signature(a), JuliaWorkspace.signature(b), "two projects' terminals never share a signature")
     }
     func testAChildProjectsTerminalLandsOnItsParentsChip() {
         // "why wasn't integrated ai in ai budget?" — the chip is "ai budget"; the terminal says "integrated-ai".

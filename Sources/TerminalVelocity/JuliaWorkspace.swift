@@ -58,13 +58,24 @@ enum JuliaWorkspace {
             return ("tab:" + host + (head.isEmpty ? "" : "/" + head)).lowercased()
         }
         if let project = entry.chatProject { return "chat:" + project.key.lowercased() }
-        if let path = entry.documentPath { return "doc:" + (path as NSString).deletingLastPathComponent.lowercased() }
+        // A TERMINAL IS ITS FOLDER — checked BEFORE documentPath. A terminal also carries
+        // a documentPath, and "the document's parent folder" for ~/Projects/x is
+        // ~/Projects: one signature for EVERY terminal he has. A single placement of that
+        // signature then dragged mcpfix, waveshare, what2do… all onto one chip.
         if entry.terminal {
             // "user — ~/Projects/x — ✳ task — node ◂ claude — 208×46": the folder is the identity.
             let parts = entry.title.components(separatedBy: " — ").map { $0.trimmingCharacters(in: .whitespaces) }
-            let folder = parts.first { $0.hasPrefix("~") || $0.hasPrefix("/") } ?? parts.first ?? entry.title
-            return "term:" + String(folder.prefix(120)).lowercased()
+            if let folder = parts.first(where: { $0.hasPrefix("~") || $0.hasPrefix("/") }) {
+                return "term:" + String(folder.prefix(120)).lowercased()
+            }
+            // No path in the title: the document path IS the folder (not its parent).
+            if let path = entry.documentPath, !path.isEmpty {
+                let home = FileManager.default.homeDirectoryForCurrentUser.path
+                return "term:" + (path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path).lowercased()
+            }
+            return "term:" + String((parts.first ?? entry.title).prefix(120)).lowercased()
         }
+        if let path = entry.documentPath { return "doc:" + (path as NSString).deletingLastPathComponent.lowercased() }
         return ("win:" + entry.appName + ":" + String(entry.title.prefix(60))).lowercased()
     }
     static func state(_ entry: WindowEntry) -> String? {
