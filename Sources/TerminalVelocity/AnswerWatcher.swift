@@ -176,6 +176,10 @@ final class AnswerWatcher {
         for (index, line) in lines.enumerated() {
             guard let j = json(line), (j["isSidechain"] as? Bool) != true, let kind = j["type"] as? String,
                   let msg = j["message"] as? [String: Any] else { continue }
+            // A PROGRAM ASKED, NOT HIM. Interactive sessions say entrypoint "cli"; the SDK /
+            // headless runs that tools like reviewHelper spawn by the dozen say "sdk-cli".
+            // (First live row was one: "You are an expert software architect providing…")
+            if let entry = j["entrypoint"] as? String, entry.hasPrefix("sdk") { return nil }
             if let c = j["cwd"] as? String { cwd = c }
             if let s = j["sessionId"] as? String { session = s }
             let at = (j["timestamp"] as? String).flatMap(iso) ?? 0

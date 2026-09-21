@@ -50,6 +50,11 @@ final class AnswerWatcherTests: XCTestCase {
         XCTAssertEqual(again.0, e, "reading from the remembered offset gives the same exchange, without re-reading the file")
         XCTAssertEqual(again.1, offset)
     }
+    func testAProgrammaticClaudeRunIsNotAQuestionHeAsked() {
+        let sdk = line(["type": "user", "uuid": "p1", "entrypoint": "sdk-cli", "timestamp": "2026-09-21T10:00:00.000Z", "message": ["role": "user", "content": "You are an expert software architect providing a codebase walkthrough"]])
+        let done = line(["type": "assistant", "entrypoint": "sdk-cli", "timestamp": "2026-09-21T10:01:00.000Z", "message": ["role": "assistant", "stop_reason": "end_turn", "content": [["type": "text", "text": "Here is the walkthrough."]]]])
+        XCTAssertNil(AnswerWatcher.claude([sdk, done], path: "/x/S.jsonl"), "reviewHelper-style SDK runs never reach his inbox")
+    }
     func testCodexAnswersOnTaskCompleteAndNeverReportsExecRuns() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + "/.codex/sessions"); try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         func write(_ source: String) throws -> String {
