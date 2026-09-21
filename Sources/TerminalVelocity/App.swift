@@ -45,6 +45,7 @@ final class SearchPanel: NSPanel {
     var snapshotGeneration = 0
     let audioQueue = DispatchQueue(label: "dev.terminalvelocity.audio", qos: .utility)
     var previousApp: NSRunningApplication?
+    let terminalCache = TerminalCache()
     var scanning = false
     let scanner = DispatchQueue(label: "dev.terminalvelocity.windows", qos: .userInitiated)
     let shortcuts: [(String, UInt32, UInt32)] = [
@@ -62,6 +63,8 @@ final class SearchPanel: NSPanel {
             if let endpoint = try AIGrouping.importConfiguration(arguments: CommandLine.arguments) { model.aiEndpoint = endpoint }
         } catch { model.message = "AI grouping setup failed: " + error.localizedDescription }
         }
+        model.all = terminalCache.load()
+        model.filter()
         bootstrapDirectoryReader()
         NSApp.setActivationPolicy(.accessory)
         panel = SearchPanel(contentRect: NSRect(x: 0, y: 0, width: 680, height: 510),
@@ -464,14 +467,19 @@ final class SearchPanel: NSPanel {
     func focusGroup(_ entries: [WindowEntry], selected: WindowEntry) async -> Bool {
         guard !switchingGroup else { return false }
         switchingGroup = true
-        defer { switchingGroup = false }
+        let openingMessage = "Opening \(selected.appName)…"
+        model.message = openingMessage
+        defer {
+            switchingGroup = false
+            if model.message == openingMessage { model.message = nil }
+        }
         var seen: Set<String> = []
         let companions = entries.filter {
             guard let key = $0.windowKey, key != selected.windowKey, seen.insert(key).inserted else { return false }
             return true
         }
         let result = await FocusSequence.run(companions: companions, selected: selected) { entry in
-            guard WindowCatalog.focus(entry) else { return false }
+            guard await WindowCatalog.focus(entry) else { return false }
             // Activation is asynchronous and can take longer than a fixed 180 ms,
             // especially when an app is hidden or switching Spaces.
             for _ in 0..<20 {
@@ -479,6 +487,9 @@ final class SearchPanel: NSPanel {
                 try? await Task.sleep(for: .milliseconds(50))
             }
             guard NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid else { return false }
+            // Browser scripting already selected and verified the stable tab before
+            // activation. There is no delayed AX raise or second selection to wait for.
+            if entry.browserTab != nil { return true }
             // Let the delayed window raise complete before selecting its tab.
             try? await Task.sleep(for: .milliseconds(140))
             guard NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid else { return false }
@@ -551,7 +562,19 @@ final class SearchPanel: NSPanel {
         let pid = previousApp?.processIdentifier
         let browserTabsEnabled = model.browserTabsEnabled
         scanner.async { [weak self] in
-            let snapshot = WindowCatalog.scan(frontmost: pid, browserTabsEnabled: browserTabsEnabled)
+            let snapshot = WindowCatalog.scan(frontmost: pid, browserTabsEnabled: browserTabsEnabled) { appPID, name, entries in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.model.scanningApp = name
+                    if let entries {
+                        self.snapshotGeneration += 1
+                        self.model.all.removeAll { $0.pid == appPID }
+                        self.model.all.append(contentsOf: entries)
+                        self.model.filter(preserveSelection: true)
+                    }
+                }
+            }
+            self?.terminalCache.save(snapshot.entries)
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.snapshotGeneration += 1
@@ -566,6 +589,7 @@ final class SearchPanel: NSPanel {
                 self.model.browserNotice = snapshot.notices.isEmpty ? nil : snapshot.notices.joined(separator: " · ")
                 self.model.filter(preserveSelection: true)
                 self.model.loading = false
+                self.model.scanningApp = nil
                 self.scanning = false
             }
         }
@@ -622,6 +646,17 @@ final class SearchPanel: NSPanel {
     }
 
     func choose(_ entry: WindowEntry) {
+        if let cached = entry.cachedTerminal {
+            guard let live = cached.resolve() else {
+                model.all.removeAll { $0.id == entry.id }
+                model.filter(preserveSelection: true)
+                model.message = "That cached terminal changed or closed. Live results are refreshing."
+                refresh()
+                return
+            }
+            choose(live)
+            return
+        }
         if let closed = entry.closedTab {
             if closed.reopen() {
                 model.closedTabs.remove(closed.id)
@@ -707,6 +742,13 @@ final class SearchPanel: NSPanel {
 
 @main struct TerminalVelocity {
     @MainActor static func main() {
+        // Debugging the answers watcher: what does Velocity read as the last exchange in a transcript?
+        if let i = CommandLine.arguments.firstIndex(of: "--last-exchange"), CommandLine.arguments.indices.contains(i + 1) {
+            if let e = AnswerWatcher.parse(CommandLine.arguments[i + 1]) {
+                print("source=\(e.source) done=\(e.done) cwd=\(e.cwd ?? "-") id=\(e.externalId)\nQ: \(e.question.prefix(200))\nA: \((e.answer ?? "(none yet)").prefix(300))")
+            } else { print("no exchange found in that transcript") }
+            return
+        }
         if CommandLine.arguments.contains("--list-windows") {
             guard AXIsProcessTrusted() else {
                 print("Accessibility permission is required. Open the app and follow its setup screen.")

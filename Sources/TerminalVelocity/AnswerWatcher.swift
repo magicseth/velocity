@@ -59,6 +59,7 @@ final class AnswerWatcher {
     private var pending: Set<String> = []
     private var flush: Task<Void, Never>?
     private var last: [String: Exchange] = [:]          // per file: what Julia was last told
+    private var questionAt: [String: UInt64] = [:]      // per file: byte offset of his current question
     private let roots: [String]
 
     init(report: @escaping (Exchange) -> Void) {
@@ -93,8 +94,11 @@ final class AnswerWatcher {
             guard let self, !Task.isCancelled else { return }
             let batch = pending; pending = []
             for path in batch {
-                let parsed = await Task.detached(priority: .utility) { Self.parse(path) }.value
-                guard let e = parsed, last[path] != e else { continue }
+                let from = questionAt[path]
+                let parsed = await Task.detached(priority: .utility) { Self.read(path, from: from) }.value
+                guard let (e, offset) = parsed else { continue }
+                questionAt[path] = offset
+                guard last[path] != e else { continue }
                 last[path] = e
                 report(e)
             }
@@ -103,10 +107,50 @@ final class AnswerWatcher {
 
     // MARK: reading a transcript's last exchange (pure; tested by scripts/answers.verify.ts)
 
-    nonisolated static func parse(_ path: String) -> Exchange? {
-        let lines = tail(path, bytes: 393_216)
-        if path.contains("/.codex/") { return codex(lines, path: path) }
-        return claude(lines, path: path)
+    nonisolated static func parse(_ path: String) -> Exchange? { read(path, from: nil)?.0 }
+
+    /// HIS QUESTION CAN BE MEGABYTES BACK. One agent turn writes tool output by the
+    /// megabyte (measured: his last question sat 1.13 MB from the end of a 123 MB
+    /// transcript, and a fixed 384 KB tail found nothing). So: read from where his
+    /// current question is known to start; otherwise walk back in growing windows until
+    /// one is found. Returns the exchange and the byte offset of its question, so the
+    /// next change to this file reads only the turn since.
+    nonisolated static func read(_ path: String, from known: UInt64?) -> (Exchange, UInt64)? {
+        let size = fileSize(path)
+        var starts: [UInt64] = []
+        if let known, known < size { starts.append(known) }
+        for window in [UInt64(524_288), 4_194_304, 33_554_432] { starts.append(size > window ? size - window : 0) }
+        var tried: Set<UInt64> = []
+        for start in starts where tried.insert(start).inserted {
+            let rows = lines(path, from: start, dropPartialFirst: start != 0 && start != known)
+            let texts = rows.map(\.text)
+            let found = path.contains("/.codex/") ? codexIndexed(texts, path: path) : claudeIndexed(texts, path: path)
+            if let (e, index) = found { return (e, rows[index].offset) }
+            if start == 0 { break }
+        }
+        return nil
+    }
+
+    nonisolated private static func fileSize(_ path: String) -> UInt64 {
+        ((try? FileManager.default.attributesOfItem(atPath: path)[.size]) as? NSNumber)?.uint64Value ?? 0
+    }
+    nonisolated private static func lines(_ path: String, from start: UInt64, dropPartialFirst: Bool) -> [(offset: UInt64, text: String)] {
+        guard let h = FileHandle(forReadingAtPath: path) else { return [] }
+        defer { try? h.close() }
+        try? h.seek(toOffset: start)
+        guard let data = try? h.readToEnd() else { return [] }
+        var out: [(UInt64, String)] = []; var lineStart = 0; var first = true
+        data.withUnsafeBytes { (buf: UnsafeRawBufferPointer) in
+            let bytes = buf.bindMemory(to: UInt8.self)
+            for i in 0...bytes.count where i == bytes.count || bytes[i] == 0x0A {
+                if i > lineStart, !(first && dropPartialFirst),
+                   let text = String(bytes: UnsafeBufferPointer(rebasing: bytes[lineStart..<i]), encoding: .utf8) {
+                    out.append((start + UInt64(lineStart), text))
+                }
+                first = false; lineStart = i + 1
+            }
+        }
+        return out
     }
 
     /// Harness chatter is not his words: injected reminders, command wrappers, interrupts.
@@ -124,10 +168,12 @@ final class AnswerWatcher {
         return String(kept.joined(separator: "\n").prefix(limit))
     }
 
-    nonisolated static func claude(_ lines: [String], path: String) -> Exchange? {
+    nonisolated static func claude(_ lines: [String], path: String) -> Exchange? { claudeIndexed(lines, path: path)?.0 }
+    nonisolated static func claudeIndexed(_ lines: [String], path: String) -> (Exchange, Int)? {
+        var questionIndex = 0
         var question: (text: String, at: Double, id: String)?; var cwd: String?; var session = ((path as NSString).lastPathComponent as NSString).deletingPathExtension
         var answer: String?; var answeredAt: Double?; var done = false
-        for line in lines {
+        for (index, line) in lines.enumerated() {
             guard let j = json(line), (j["isSidechain"] as? Bool) != true, let kind = j["type"] as? String,
                   let msg = j["message"] as? [String: Any] else { continue }
             if let c = j["cwd"] as? String { cwd = c }
@@ -140,7 +186,7 @@ final class AnswerWatcher {
                     text = parts.filter { ($0["type"] as? String) == "text" }.compactMap { $0["text"] as? String }.joined(separator: "\n")
                 }
                 guard isHis(text) else { continue }
-                question = (text, at, (j["uuid"] as? String) ?? String(Int(at)))
+                question = (text, at, (j["uuid"] as? String) ?? String(Int(at))); questionIndex = index
                 answer = nil; answeredAt = nil; done = false                                  // a new question: start over
             } else if kind == "assistant", question != nil {
                 let parts = msg["content"] as? [[String: Any]] ?? []
@@ -152,11 +198,13 @@ final class AnswerWatcher {
         guard let q = question else { return nil }
         let asked = prose(q.text, limit: 600)
         guard !asked.isEmpty else { return nil }
-        return Exchange(externalId: "claude-cli:\(session):\(q.id)", source: "Claude Code", sessionId: session, cwd: cwd,
-                        question: asked, answer: answer.map { prose($0, limit: 1500) }, askedAt: q.at, answeredAt: answeredAt, done: done && answer != nil)
+        return (Exchange(externalId: "claude-cli:\(session):\(q.id)", source: "Claude Code", sessionId: session, cwd: cwd,
+                        question: asked, answer: answer.map { prose($0, limit: 1500) }, askedAt: q.at, answeredAt: answeredAt, done: done && answer != nil), questionIndex)
     }
 
-    nonisolated static func codex(_ lines: [String], path: String) -> Exchange? {
+    nonisolated static func codex(_ lines: [String], path: String) -> Exchange? { codexIndexed(lines, path: path)?.0 }
+    nonisolated static func codexIndexed(_ lines: [String], path: String) -> (Exchange, Int)? {
+        var questionIndex = 0
         // The session's meta line sits at the head of the file, not in the tail.
         var cwd: String?; var session = ((path as NSString).lastPathComponent as NSString).deletingPathExtension; var origin = "cli"
         if let head = head(path, bytes: 131_072).first(where: { $0.contains("\"session_meta\"") }), let j = json(head), let p = j["payload"] as? [String: Any] {
@@ -164,12 +212,12 @@ final class AnswerWatcher {
         }
         if origin == "exec" { return nil }                                                   // a program ran it; he did not ask
         var question: (text: String, at: Double)?; var answer: String?; var answeredAt: Double?; var done = false
-        for line in lines {
+        for (index, line) in lines.enumerated() {
             guard let j = json(line), let kind = j["type"] as? String, let p = j["payload"] as? [String: Any] else { continue }
             let at = (j["timestamp"] as? String).flatMap(iso) ?? 0
             if kind == "response_item", (p["type"] as? String) == "message", let role = p["role"] as? String, let content = p["content"] as? [[String: Any]] {
                 let text = content.filter { ["input_text", "output_text"].contains(($0["type"] as? String) ?? "") }.compactMap { $0["text"] as? String }.joined(separator: "\n")
-                if role == "user", isHis(text) { question = (text, at); answer = nil; answeredAt = nil; done = false }
+                if role == "user", isHis(text) { question = (text, at); questionIndex = index; answer = nil; answeredAt = nil; done = false }
                 else if role == "assistant", question != nil, !text.isEmpty { answer = text; answeredAt = at }
             } else if kind == "event_msg", question != nil {
                 if (p["type"] as? String) == "task_complete" { done = true }
@@ -179,8 +227,8 @@ final class AnswerWatcher {
         guard let q = question else { return nil }
         let asked = prose(q.text, limit: 600)
         guard !asked.isEmpty else { return nil }
-        return Exchange(externalId: "codex:\(session):\(Int(q.at))", source: origin == "cli" ? "Codex" : "Codex (\(origin))", sessionId: session, cwd: cwd,
-                        question: asked, answer: answer.map { prose($0, limit: 1500) }, askedAt: q.at, answeredAt: answeredAt, done: done && answer != nil)
+        return (Exchange(externalId: "codex:\(session):\(Int(q.at))", source: origin == "cli" ? "Codex" : "Codex (\(origin))", sessionId: session, cwd: cwd,
+                        question: asked, answer: answer.map { prose($0, limit: 1500) }, askedAt: q.at, answeredAt: answeredAt, done: done && answer != nil), questionIndex)
     }
 
     nonisolated private static func json(_ line: String) -> [String: Any]? {
@@ -190,16 +238,6 @@ final class AnswerWatcher {
     nonisolated private static func iso(_ s: String) -> Double? {
         let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return (f.date(from: s) ?? ISO8601DateFormatter().date(from: s)).map { $0.timeIntervalSince1970 * 1000 }
-    }
-    nonisolated private static func tail(_ path: String, bytes: UInt64) -> [String] {
-        guard let h = FileHandle(forReadingAtPath: path) else { return [] }
-        defer { try? h.close() }
-        let size = (try? h.seekToEnd()) ?? 0
-        try? h.seek(toOffset: size > bytes ? size - bytes : 0)
-        guard let data = try? h.readToEnd(), let text = String(data: data, encoding: .utf8) else { return [] }
-        var lines = text.components(separatedBy: "\n").filter { !$0.isEmpty }
-        if size > bytes, !lines.isEmpty { lines.removeFirst() }                              // a line cut in half
-        return lines
     }
     nonisolated private static func head(_ path: String, bytes: Int) -> [String] {
         guard let h = FileHandle(forReadingAtPath: path) else { return [] }

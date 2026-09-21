@@ -36,6 +36,20 @@ final class AnswerWatcherTests: XCTestCase {
         let leaky = [user("deploy it", "2026-09-21T10:00:00.000Z"), assistant("Done.\nexport api key = 12345\nIt is live.", "2026-09-21T10:00:09.000Z", stop: "end_turn")]
         XCTAssertEqual(AnswerWatcher.claude(leaky, path: "/x/S.jsonl")?.answer, "Done.\nIt is live.", "a secret-shaped line is refused; the rest stands")
     }
+    func testHisQuestionIsFoundEvenMegabytesBackAndTheOffsetIsRemembered() throws {
+        // Measured on a real session: his last question sat 1.13 MB from the end; a fixed 384 KB tail found nothing.
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".jsonl").path
+        let noise = (0..<40).map { i in line(["type": "user", "timestamp": "2026-09-21T10:00:0\(i % 10).000Z", "message": ["role": "user", "content": [["type": "tool_result", "content": String(repeating: "x", count: 60_000)]]]]) }
+        let rows = [user("old question", "2026-09-21T09:00:00.000Z", uuid: "old"), assistant("old answer", "2026-09-21T09:01:00.000Z", stop: "end_turn"),
+                    user("is the strip fixed?", "2026-09-21T10:00:00.000Z", uuid: "q2")] + noise + [assistant("Yes — verified by the stress test.", "2026-09-21T10:30:00.000Z", stop: "end_turn")]
+        try rows.joined(separator: "\n").write(toFile: path, atomically: true, encoding: .utf8)
+        let (e, offset) = try XCTUnwrap(AnswerWatcher.read(path, from: nil))
+        XCTAssertEqual(e.question, "is the strip fixed?"); XCTAssertTrue(e.done); XCTAssertEqual(e.answer, "Yes — verified by the stress test.")
+        XCTAssertGreaterThan(offset, 0)
+        let again = try XCTUnwrap(AnswerWatcher.read(path, from: offset))
+        XCTAssertEqual(again.0, e, "reading from the remembered offset gives the same exchange, without re-reading the file")
+        XCTAssertEqual(again.1, offset)
+    }
     func testCodexAnswersOnTaskCompleteAndNeverReportsExecRuns() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + "/.codex/sessions"); try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         func write(_ source: String) throws -> String {
