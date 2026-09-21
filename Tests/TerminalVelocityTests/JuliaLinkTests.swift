@@ -109,6 +109,15 @@ final class JuliaWorkspaceTests: XCTestCase {
         let manifest = JuliaWorkspace.manifest(projects: ["convexos"], entries: entries)
         XCTAssertEqual(manifest["*"]?.map(\.key), ["t2"], "the ds4 terminal matched no project by name: it goes to the * bucket for Jev; the Finder window stays local")
     }
+    func testAWindowsSignatureIsWhatItIsNotWhichProcessOwnsIt() {
+        let term = entry("901:window:5", app: "Terminal", title: "magicseth — ~/Projects/integrated-ai — ✳ Wire the gateway — node ◂ claude — 208×46", terminal: true)
+        XCTAssertEqual(JuliaWorkspace.signature(term), "term:~/projects/integrated-ai", "the folder, not the user prefix, the task, or the size")
+        let again = entry("77:window:9", app: "Terminal", title: "magicseth — ~/Projects/integrated-ai — ◐ Another task — node", terminal: true)
+        XCTAssertEqual(JuliaWorkspace.signature(again), JuliaWorkspace.signature(term), "same folder after a restart is the same window to Julia")
+        let tab = entry("b", app: "Google Chrome", title: "Pull request #12", url: "https://github.com/get-convex/ai-budget/pull/12?x=1")
+        XCTAssertEqual(JuliaWorkspace.signature(tab), "tab:github.com/get-convex/ai-budget", "site + repo, never the query string")
+        XCTAssertEqual(JuliaWorkspace.windows(for: "integrated-ai", in: [term]).first?.sig, "term:~/projects/integrated-ai")
+    }
     func testOnlyChangesReachTheBoardAndAnEmptiedProjectIsForgotten() {
         let a = [JuliaWindow(key: "t1", kind: "terminal", app: "Terminal", title: "x")]
         let previous = ["convexos": a, "ds4": a]

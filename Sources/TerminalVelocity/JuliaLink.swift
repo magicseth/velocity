@@ -284,6 +284,7 @@ enum JuliaKeychain {
                         var d: [String: Any] = ["key": w.key, "kind": w.kind, "app": w.app, "title": w.title]
                         if let state = w.state { d["state"] = state }
                         if let task = w.task { d["task"] = task }
+                        if let sig = w.sig { d["sig"] = sig }
                         return d
                     }
                     _ = try await client.call(.workspace, ["token": token, "project": project, "windows": list, "source": "velocity"])
@@ -322,7 +323,7 @@ enum JuliaKeychain {
                 notice?("Nothing is open for \(project) right now."); return
             }
             Task { @MainActor [weak self] in
-                if await self?.foreground?(group.entries, group.lead) != true { _ = WindowCatalog.focus(group.lead) }
+                if await self?.foreground?(group.entries, group.lead) != true { _ = await WindowCatalog.focus(group.lead) }
             }
             return
         }
@@ -348,7 +349,9 @@ enum JuliaKeychain {
         // velocity://focus?project=X&window=<key> — one of them.
         if url.host == "focus", let key = JuliaWorkspace.query(in: url, "window") {
             guard let entry = entries.first(where: { $0.id == key }) else { notice?("That window is no longer open."); return }
-            if !WindowCatalog.focus(entry) { openEntry?(entry) }
+            Task { @MainActor in
+                if await !WindowCatalog.focus(entry) { openEntry?(entry) }
+            }
             return
         }
         guard let handle = Self.handle(in: url) else { return }
@@ -358,6 +361,8 @@ enum JuliaKeychain {
         }
         // Straight to the terminal. Velocity itself never comes forward: the
         // board asked for that window, not for the palette.
-        if !WindowCatalog.focus(entry) { openEntry?(entry) }
+        Task { @MainActor in
+                if await !WindowCatalog.focus(entry) { openEntry?(entry) }
+            }
     }
 }

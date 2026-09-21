@@ -24,6 +24,11 @@ struct JuliaWindow: Equatable, Codable {
     var state: String? = nil
     /// For a terminal agent: the task its title names — what is being worked on.
     var task: String? = nil
+    /// WHAT THIS WINDOW IS, independent of process and window ids: the folder a
+    /// terminal sits in, a tab's site + first path segments, a document's folder, a
+    /// chat's project. Julia remembers placements by this — so "that terminal belongs
+    /// to ai budget" survives restarts, and a correction made once keeps holding.
+    var sig: String? = nil
 }
 
 enum JuliaWorkspace {
@@ -39,6 +44,25 @@ enum JuliaWorkspace {
                    entry.chatProject?.name ?? "", entry.launchURL?.path ?? ""]
         if let path = entry.browserTab?.url, let host = URL(string: path)?.host { hay.append(host) }
         return hay.contains { squash($0).contains(needle) }
+    }
+    /// VELOCITY SEES; JULIA JUDGES. This is the only identity work done here: a
+    /// stable, content-free-as-possible name for the window. Which project it belongs
+    /// to — beyond the cheap name match below — is Julia's call (his corrections
+    /// first, then Jev), never decided on this side of the wire.
+    static func signature(_ entry: WindowEntry) -> String {
+        if let tab = entry.browserTab, let url = URL(string: tab.url), let host = url.host {
+            let head = url.path.split(separator: "/").prefix(2).joined(separator: "/")
+            return ("tab:" + host + (head.isEmpty ? "" : "/" + head)).lowercased()
+        }
+        if let project = entry.chatProject { return "chat:" + project.key.lowercased() }
+        if let path = entry.documentPath { return "doc:" + (path as NSString).deletingLastPathComponent.lowercased() }
+        if entry.terminal {
+            // "user — ~/Projects/x — ✳ task — node ◂ claude — 208×46": the folder is the identity.
+            let parts = entry.title.components(separatedBy: " — ").map { $0.trimmingCharacters(in: .whitespaces) }
+            let folder = parts.first { $0.hasPrefix("~") || $0.hasPrefix("/") } ?? parts.first ?? entry.title
+            return "term:" + String(folder.prefix(120)).lowercased()
+        }
+        return ("win:" + entry.appName + ":" + String(entry.title.prefix(60))).lowercased()
     }
     static func state(_ entry: WindowEntry) -> String? {
         switch entry.attention {
@@ -70,7 +94,7 @@ enum JuliaWorkspace {
         var out: [JuliaWindow] = []
         for entry in entries where entry.cachedTerminal == nil && entry.closedTab == nil && entry.launchURL == nil {
             guard mentions(entry, project), !looksSensitive(entry.title), seen.insert(entry.id).inserted else { continue }
-            out.append(JuliaWindow(key: entry.id, kind: kind(entry), app: entry.appName, title: String(entry.title.prefix(140)), state: state(entry), task: entry.agentTaskTitle.map { String($0.prefix(160)) }))
+            out.append(JuliaWindow(key: entry.id, kind: kind(entry), app: entry.appName, title: String(entry.title.prefix(140)), state: state(entry), task: entry.agentTaskTitle.map { String($0.prefix(160)) }, sig: signature(entry)))
         }
         let order = ["terminal": 0, "chat": 1, "document": 2, "browser": 3, "window": 4]
         return Array(out.sorted { (order[$0.kind] ?? 9, $0.title) < (order[$1.kind] ?? 9, $1.title) }.prefix(40))
@@ -92,7 +116,7 @@ enum JuliaWorkspace {
             guard !matched.contains(entry.id), !looksSensitive(entry.title), seen.insert(entry.id).inserted else { continue }
             let k = kind(entry)
             guard k != "window" else { continue }
-            loose.append(JuliaWindow(key: entry.id, kind: k, app: entry.appName, title: String(entry.title.prefix(140)), state: state(entry), task: entry.agentTaskTitle.map { String($0.prefix(160)) }))
+            loose.append(JuliaWindow(key: entry.id, kind: k, app: entry.appName, title: String(entry.title.prefix(140)), state: state(entry), task: entry.agentTaskTitle.map { String($0.prefix(160)) }, sig: signature(entry)))
         }
         out["*"] = Array(loose.prefix(40))
         return out
