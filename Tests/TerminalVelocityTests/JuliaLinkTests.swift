@@ -118,6 +118,16 @@ final class JuliaWorkspaceTests: XCTestCase {
         XCTAssertEqual(JuliaWorkspace.signature(tab), "tab:github.com/get-convex/ai-budget", "site + repo, never the query string")
         XCTAssertEqual(JuliaWorkspace.windows(for: "integrated-ai", in: [term]).first?.sig, "term:~/projects/integrated-ai")
     }
+    func testAChildProjectsTerminalLandsOnItsParentsChip() {
+        // "why wasn't integrated ai in ai budget?" — the chip is "ai budget"; the terminal says "integrated-ai".
+        let term = entry("t", app: "Terminal", title: "~/Projects/integrated-ai — ✳ Wire the gateway — claude", terminal: true)
+        let other = entry("q", app: "Terminal", title: "~/Projects/quickjs — zsh", terminal: true)
+        XCTAssertTrue(JuliaWorkspace.windows(for: "ai budget", in: [term]).isEmpty, "the chip's title alone cannot match it")
+        let m = JuliaWorkspace.manifest(names: ["ai budget": ["ai budget", "ai-budget", "integrated-ai"]], order: ["ai budget"], entries: [term, other])
+        XCTAssertEqual(m["ai budget"]?.map(\.key), ["t"])
+        XCTAssertEqual(m["*"]?.map(\.key), ["q"], "what no name matches still goes to Julia's judge")
+        XCTAssertEqual(JuliaWorkspace.group(for: "ai budget", names: ["ai budget", "integrated-ai"], in: [term])?.lead.id, "t", "and Foreground all raises it")
+    }
     func testOnlyChangesReachTheBoardAndAnEmptiedProjectIsForgotten() {
         let a = [JuliaWindow(key: "t1", kind: "terminal", app: "Terminal", title: "x")]
         let previous = ["convexos": a, "ds4": a]

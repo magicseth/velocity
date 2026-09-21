@@ -37,6 +37,9 @@ enum JuliaWorkspace {
     static func squash(_ s: String) -> String {
         s.lowercased().filter { !$0.isWhitespace && $0 != "_" && $0 != "-" }
     }
+    /// Does this window name the project by ANY of the names Julia gave for it —
+    /// its title, former names, its folder, and the same for its child projects?
+    static func mentions(_ entry: WindowEntry, anyOf names: [String]) -> Bool { names.contains { mentions(entry, $0) } }
     static func mentions(_ entry: WindowEntry, _ project: String) -> Bool {
         let needle = squash(project)
         guard needle.count >= 3 else { return false }
@@ -89,11 +92,12 @@ enum JuliaWorkspace {
         return "window"
     }
     /// The windows that belong to a project, one per window/tab, terminals first.
-    static func windows(for project: String, in entries: [WindowEntry]) -> [JuliaWindow] {
+    static func windows(for project: String, in entries: [WindowEntry]) -> [JuliaWindow] { windows(named: [project], in: entries) }
+    static func windows(named names: [String], in entries: [WindowEntry]) -> [JuliaWindow] {
         var seen: Set<String> = []
         var out: [JuliaWindow] = []
         for entry in entries where entry.cachedTerminal == nil && entry.closedTab == nil && entry.launchURL == nil {
-            guard mentions(entry, project), !looksSensitive(entry.title), seen.insert(entry.id).inserted else { continue }
+            guard mentions(entry, anyOf: names), !looksSensitive(entry.title), seen.insert(entry.id).inserted else { continue }
             out.append(JuliaWindow(key: entry.id, kind: kind(entry), app: entry.appName, title: String(entry.title.prefix(140)), state: state(entry), task: entry.agentTaskTitle.map { String($0.prefix(160)) }, sig: signature(entry)))
         }
         let order = ["terminal": 0, "chat": 1, "document": 2, "browser": 3, "window": 4]
@@ -103,10 +107,16 @@ enum JuliaWorkspace {
     /// terminals, tabs, chats and documents that matched NO project, so Julia
     /// (Jev) can place what a name-match cannot. Plain windows stay local.
     static func manifest(projects: [String], entries: [WindowEntry]) -> [String: [JuliaWindow]] {
+        manifest(names: Dictionary(uniqueKeysWithValues: projects.map { ($0, [$0]) }), order: projects, entries: entries)
+    }
+    /// `names`: for each of Julia's chips, every name its windows might use (a child
+    /// project's terminal is reported under its PARENT's chip). A window goes to the
+    /// first chip, in his rank order, that names it.
+    static func manifest(names: [String: [String]], order: [String], entries: [WindowEntry]) -> [String: [JuliaWindow]] {
         var out: [String: [JuliaWindow]] = [:]
         var matched: Set<String> = []
-        for project in projects {
-            let list = windows(for: project, in: entries)
+        for project in order {
+            let list = windows(named: names[project] ?? [project], in: entries).filter { !matched.contains($0.key) }
             out[project] = list
             for w in list { matched.insert(w.key) }
         }
@@ -130,8 +140,8 @@ enum JuliaWorkspace {
         return out
     }
     /// The entries a "foreground all" should raise, and which one leads.
-    static func group(for project: String, in entries: [WindowEntry]) -> (entries: [WindowEntry], lead: WindowEntry)? {
-        let keys = Set(windows(for: project, in: entries).map(\.key))
+    static func group(for project: String, names: [String]? = nil, in entries: [WindowEntry]) -> (entries: [WindowEntry], lead: WindowEntry)? {
+        let keys = Set(windows(named: names ?? [project], in: entries).map(\.key))
         let members = entries.filter { keys.contains($0.id) }
         guard let lead = members.first(where: \.terminal) ?? members.first else { return nil }
         return (members, lead)

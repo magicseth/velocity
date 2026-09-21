@@ -163,6 +163,8 @@ enum JuliaKeychain {
     /// Everything on the Mac right now (for jump-by-project and foreground).
     var allEntries: (() -> [WindowEntry])?
     private var projectTitles: [String] = []
+    /// Every name each chip's windows might use (title, former names, folder, children's).
+    private var projectNames: [String: [String]] = [:]
     private var projectsFetchedAt = Date.distantPast
     private var workspace: [String: [JuliaWindow]] = [:]
     private var pendingWorkspace: [String: [JuliaWindow]]?
@@ -241,7 +243,7 @@ enum JuliaKeychain {
         let reports = JuliaReporter.reports(entries) { NSRunningApplication(processIdentifier: $0)?.launchDate }
         pendingReports = reports
         if !projectTitles.isEmpty {
-            let current = JuliaWorkspace.manifest(projects: projectTitles, entries: all)
+            let current = JuliaWorkspace.manifest(names: projectNames, order: projectTitles, entries: all)
             let changed = JuliaWorkspace.changes(previous: workspace, current: current)
             if !changed.isEmpty { pendingWorkspace = (pendingWorkspace ?? [:]).merging(changed) { _, new in new } }
             workspace = current
@@ -257,6 +259,9 @@ enum JuliaKeychain {
             guard let value = try? await client.call(.projects, ["token": token]) as? [String: Any],
                   let projects = value["projects"] as? [[String: Any]] else { return }
             projectTitles = projects.compactMap { $0["title"] as? String }
+            var names: [String: [String]] = [:]
+            for p in projects { if let t = p["title"] as? String { names[t] = (p["matchNames"] as? [String]) ?? [t] } }
+            projectNames = names
         }
     }
 
@@ -319,7 +324,7 @@ enum JuliaKeychain {
         let entries = allEntries?() ?? []
         // velocity://foreground?project=X — everything for that project, at once.
         if url.host == "foreground", let project = JuliaWorkspace.query(in: url, "project") {
-            guard let group = JuliaWorkspace.group(for: project, in: entries) else {
+            guard let group = JuliaWorkspace.group(for: project, names: projectNames[project], in: entries) else {
                 notice?("Nothing is open for \(project) right now."); return
             }
             Task { @MainActor [weak self] in
