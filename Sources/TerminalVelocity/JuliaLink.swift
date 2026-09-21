@@ -95,6 +95,7 @@ struct JuliaClient {
         case createCode = "pairing:createCode", status = "pairing:status"
         case report = "attention:report", resolve = "attention:resolve"
         case projects = "attention:byProject", workspace = "attention:workspace"
+        case exchange = "exchanges:report"
         var kind: String { self == .status || self == .projects ? "query" : "mutation" }
     }
     struct Failure: LocalizedError { let message: String; var errorDescription: String? { message } }
@@ -168,6 +169,8 @@ enum JuliaKeychain {
     private var projectsFetchedAt = Date.distantPast
     private var workspace: [String: [JuliaWindow]] = [:]
     private var pendingWorkspace: [String: [JuliaWindow]]?
+    /// He asked an agent something; is there an answer? (AnswerWatcher.swift)
+    private var answers: AnswerWatcher?
     var notice: ((String) -> Void)?
     var changed: (() -> Void)?
     private var reporter = JuliaReporter()
@@ -236,10 +239,36 @@ enum JuliaKeychain {
         }
     }
 
+    /// An exchange changed (asked → working → answered). Velocity adds the one thing only
+    /// it knows — a handle back to the exact terminal tab the conversation is in.
+    private func report(_ e: Exchange) {
+        guard state == .paired, let client = try? JuliaClient() else { return }
+        var args: [String: Any] = ["token": token, "externalId": e.externalId, "source": e.source, "sessionId": e.sessionId,
+            "project": e.cwd.map { ($0 as NSString).lastPathComponent } ?? e.source, "question": e.question,
+            "askedAt": e.askedAt, "done": e.done]
+        if let cwd = e.cwd { args["cwd"] = cwd }
+        if let answer = e.answer { args["answer"] = answer }
+        if let at = e.answeredAt { args["answeredAt"] = at }
+        if let cwd = e.cwd, let jump = Self.jumpHandle(forFolder: cwd, in: allEntries?() ?? []) { args["jump"] = jump }
+        Task { _ = try? await client.call(.exchange, args) }
+    }
+
+    /// The terminal sitting in that folder — preferring one whose title shows an agent.
+    static func jumpHandle(forFolder cwd: String, in entries: [WindowEntry]) -> String? {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let sig = "term:" + (cwd.hasPrefix(home) ? "~" + cwd.dropFirst(home.count) : cwd).lowercased()
+        let here = entries.filter { $0.terminal && JuliaWorkspace.signature($0) == sig }
+        guard let entry = here.first(where: { $0.attention != .none }) ?? here.first,
+              let launch = NSRunningApplication(processIdentifier: entry.pid)?.launchDate,
+              let destination = AttentionDestination(entry: entry, launch: launch) else { return nil }
+        return JuliaJumpHandle.encode(destination)
+    }
+
     /// Called after every scan: `attention` is what the notifier sees (done
     /// objectives filtered out); `all` is every window, for the per-project manifest.
     func observe(attention entries: [WindowEntry], all: [WindowEntry] = []) {
         guard state == .paired else { return }
+        if answers == nil { answers = AnswerWatcher { [weak self] exchange in self?.report(exchange) } }
         let reports = JuliaReporter.reports(entries) { NSRunningApplication(processIdentifier: $0)?.launchDate }
         pendingReports = reports
         if !projectTitles.isEmpty {
@@ -348,6 +377,15 @@ enum JuliaKeychain {
             config.createsNewApplicationInstance = false
             NSWorkspace.shared.open([dir], withApplicationAt: app, configuration: config) { [weak self] _, error in
                 if let error { Task { @MainActor in self?.notice?("Couldn’t open a terminal there: " + error.localizedDescription) } }
+            }
+            return
+        }
+        // velocity://focus?sig=term:~/projects/x — the terminal in that folder (an answer's conversation).
+        if url.host == "focus", let sig = JuliaWorkspace.query(in: url, "sig") {
+            let here = entries.filter { JuliaWorkspace.signature($0) == sig.lowercased() }
+            guard let entry = here.first(where: { $0.attention != .none }) ?? here.first else { notice?("That conversation's terminal is no longer open."); return }
+            Task { @MainActor [weak self] in
+                if await !WindowCatalog.focus(entry) { self?.openEntry?(entry) }
             }
             return
         }
