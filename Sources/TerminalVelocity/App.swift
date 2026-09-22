@@ -481,12 +481,22 @@ final class SearchPanel: NSPanel {
             if model.message == openingMessage { model.message = nil }
         }
         var seen: Set<String> = []
+        // One raise per WINDOW. A browser tab has no AX window key (its window is known by the
+        // browser's own id), so keying on windowKey alone dropped every tab from the group —
+        // "double clicking what2do did not open good.pm": the terminal came up, the tabs never
+        // got a turn. Each tab keys by its browser window; a tab already chosen for that
+        // window carries it.
+        let groupKey: (WindowEntry) -> String? = { e in
+            e.windowKey ?? e.browserTab.map { "\($0.browserID):\($0.windowID)" }
+        }
+        let selectedKey = groupKey(selected)
         let companions = entries.filter {
-            guard let key = $0.windowKey, key != selected.windowKey, seen.insert(key).inserted else { return false }
+            guard let key = groupKey($0), key != selectedKey, seen.insert(key).inserted else { return false }
             return true
         }
         let result = await FocusSequence.run(companions: companions, selected: selected) { entry in
-            guard await WindowCatalog.focus(entry) else { return false }
+            guard await WindowCatalog.focus(entry) else { JuliaLog.note("focus FAILED: \(entry.appName) “\(entry.title.prefix(40))” tab=\(entry.browserTab != nil)"); return false }
+            JuliaLog.note("focus ok: \(entry.appName) “\(entry.title.prefix(40))”")
             // Activation is asynchronous and can take longer than a fixed 180 ms,
             // especially when an app is hidden or switching Spaces.
             for _ in 0..<20 {
