@@ -65,11 +65,13 @@ enum JuliaHands {
     /// info was the obvious question, but macOS answers it only for Apple-signed
     /// processes now — a probe script saw Netflix at rate 1.0 while the app saw nothing,
     /// so the key was never pressed. Sound coming out of a media app is a plain fact.
-    static func somethingIsPlaying() -> Bool {
+    static func somethingIsPlaying() -> Bool { !loudProcesses().isEmpty }
+    /// The processes putting sound out right now (ours excluded) — the fact a pause
+    /// receipt is measured against: fewer afterwards = `audio-silent`; not fewer = uncertain.
+    static func loudProcesses() -> Set<pid_t> {
         // Any process but our own: a browser's sound comes out of a HELPER process that is
         // not an NSRunningApplication, so filtering to apps found nothing.
-        let loud = AudioActivity.activeAppPIDs(apps: NSWorkspace.shared.runningApplications)
-        return !loud.subtracting([getpid()]).isEmpty
+        AudioActivity.activeAppPIDs(apps: NSWorkspace.shared.runningApplications).subtracting([getpid()])
     }
     static func pauseByKey(ifAnyPlaying entries: [WindowEntry]) {
         DispatchQueue.global(qos: .userInitiated).async {

@@ -60,6 +60,18 @@ enum WindowRaise {
         return arr?.first?.uint64Value
     }
 
+    /// The 1-based position of the window's Space on its display ("Space 2"), for a
+    /// receipt that says WHERE the window came forward. Nil when unknown.
+    static func spaceNumber(of windowID: CGWindowID) -> Int? {
+        guard let mainCID, let managedDisplaySpaces, let target = space(of: windowID),
+              let displays = managedDisplaySpaces(mainCID())?.takeRetainedValue() as? [[String: Any]] else { return nil }
+        for d in displays {
+            guard let spaces = d["Spaces"] as? [[String: Any]] else { continue }
+            if let i = spaces.firstIndex(where: { ($0["id64"] as? UInt64) == target }) { return i + 1 }
+        }
+        return nil
+    }
+
     /// Switch to the window's Space when it is not the current one on its display. Returns
     /// true when a switch was issued (the caller waits for it).
     static func showSpace(of windowID: CGWindowID) -> Bool {

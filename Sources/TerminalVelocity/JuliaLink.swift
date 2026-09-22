@@ -225,7 +225,7 @@ enum JuliaKeychain {
         }
         if prefrontal == nil {
             let link = PrefrontalLink(endpoint: client.endpoint)
-            link.perform = { [weak self] command in self?.perform(command) }
+            link.perform = { [weak self] command in await self?.perform(command) ?? .failed(class: "unavailable", why: "Velocity is shutting down.") }
             prefrontal = link
         }
         prefrontal?.start(token: token)
@@ -255,10 +255,30 @@ enum JuliaKeychain {
     }
 
     /// A command from another surface, run through the same velocity:// handling a
-    /// same-machine click uses. Nil = dispatched; a string = why it could not be.
-    private func perform(_ command: PrefrontalCommand) -> String? {
-        guard let url = command.velocityURL else { return "Velocity can't run a \(command.kind) with those arguments." }
-        return perform(url)
+    /// same-machine click uses — and RESOLVED ONLY WITH ITS RECEIPT: how the outcome was
+    /// seen, or why it could not be. `wake` and `doctor` answer for themselves.
+    private func perform(_ command: PrefrontalCommand) async -> ActReceipt {
+        switch command.kind {
+        case "wake": return .verified(method: "self", observed: "Velocity is awake on \(MachineIdentity.name)")
+        case "doctor": return Self.doctorReceipt()
+        default: break
+        }
+        guard let url = command.velocityURL else { return .failed(class: "invalid", why: "Velocity can't run a \(command.kind) with those arguments.") }
+        return await perform(url)
+    }
+
+    /// THE DOCTOR'S QUESTION: which transcript folders can this Mac's harvester read? The
+    /// answer is the act's own evidence (`self`); none readable is a failure, said plainly.
+    static func doctorReceipt() -> ActReceipt {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let roots = ["~/.claude/projects", "~/.codex/sessions"]
+        var readable: [String] = [], unreadable: [String] = []
+        for root in roots {
+            let path = home + root.dropFirst()
+            if (try? FileManager.default.contentsOfDirectory(atPath: path)) != nil { readable.append(root) } else { unreadable.append(root) }
+        }
+        guard !readable.isEmpty else { return .failed(class: "unavailable", why: "no transcript folder is readable (\(unreadable.joined(separator: ", ")))") }
+        return .verified(method: "self", observed: "readable: \(readable.joined(separator: ", "))" + (unreadable.isEmpty ? "" : " · not readable: \(unreadable.joined(separator: ", "))"))
     }
 
     var menuTitle: String {
@@ -346,55 +366,67 @@ enum JuliaKeychain {
         switch name { case "blue": return .systemBlue; case "orange": return .systemOrange; default: return .white }
     }
 
-    private func raise(_ entry: WindowEntry) {
-        Task { @MainActor [weak self] in
-            guard let app = NSRunningApplication(processIdentifier: entry.pid), !app.isTerminated else { return }
-            let tint = self?.glowTint ?? .white
-            if NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid {
-                if await !WindowCatalog.focus(entry) { self?.openEntry?(entry) }
-                if let el = entry.element, let wid = WindowRaise.windowID(of: el) { WindowRaise.glow(windowID: wid, tint: tint) }
-                return
-            }
-            // ONE WINDOW, NOT THE APP: the window server puts exactly this window in front
-            // ("i don't like that open foregrounds the entire terminal app"). Verified by the
-            // frontmost app; the Launch Services path below is the fallback.
-            JuliaLog.note("raise: element=\(entry.element != nil) wid=\(entry.element.flatMap(WindowRaise.windowID(of:)).map(String.init) ?? "nil") skylight=\(WindowRaise.available)")
-            if let el = entry.element, let wid = WindowRaise.windowID(of: el) {
-                if entry.minimized { AXUIElementSetAttributeValue(el, kAXMinimizedAttribute as CFString, kCFBooleanFalse) }
-                if await WindowRaise.bring(pid: entry.pid, windowID: wid, element: el) {
-                    if entry.tab != nil || entry.browserTab != nil { _ = await WindowCatalog.focus(entry) }
-                    WindowRaise.glow(windowID: wid, tint: tint)
-                    JuliaLog.note("raised one window: \(app.localizedName ?? "") “\(entry.title.prefix(40))” (verified)")
-                    return
-                }
-                JuliaLog.note("single-window raise NOT verified for “\(entry.title.prefix(40))”; falling back to app activation")
-            }
-            // A background app's own activation requests are ignored on macOS 14 — measured:
-            // NSApp.activate() never took, app.activate() reported success while the target
-            // stayed behind Chrome, and `open -g` did the same. What IS honoured from the
-            // background is a Launch Services open WITH activation — what `open -a` does.
-            // So: bring the app forward that way, then raise the exact window and tab.
-            guard let url = app.bundleURL else { return }
-            app.unhide()
-            if let window = entry.element { AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanFalse) }
-            let config = NSWorkspace.OpenConfiguration()
-            config.activates = true
-            config.createsNewApplicationInstance = false
-            NSWorkspace.shared.openApplication(at: url, configuration: config) { _, error in
-                Task { @MainActor in
-                    if error != nil { self?.notice?("Couldn’t bring \(app.localizedName ?? "that app") forward."); return }
-                    for _ in 0..<20 {
-                        if NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid { break }
-                        try? await Task.sleep(for: .milliseconds(50))
-                    }
-                    if let window = entry.element {
-                        AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
-                        AXUIElementPerformAction(window, kAXRaiseAction as CFString)
-                    }
-                    if entry.tab != nil || entry.browserTab != nil { _ = await WindowCatalog.focus(entry) }
-                }
-            }
+    private func raise(_ entry: WindowEntry) async -> ActReceipt {
+        guard let app = NSRunningApplication(processIdentifier: entry.pid), !app.isTerminated else {
+            return .failed(class: "stale", why: "That app is no longer running.")
         }
+        let tint = glowTint
+        let name = "“\(entry.title.prefix(40))”"
+        let where_ = { (wid: CGWindowID) -> String in WindowRaise.spaceNumber(of: wid).map { " on Space \($0)" } ?? "" }
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid {
+            if await !WindowCatalog.focus(entry) { openEntry?(entry) }
+            if let el = entry.element, let wid = WindowRaise.windowID(of: el) {
+                WindowRaise.glow(windowID: wid, tint: tint)
+                if WindowRaise.isTop(windowID: wid, pid: entry.pid) { return .verified(method: "z-order", observed: "\(name) topmost\(where_(wid))") }
+            }
+            return .verified(method: "app-activated", observed: "\(app.localizedName ?? "the app") was already in front; \(name) selected, window not verified")
+        }
+        // ONE WINDOW, NOT THE APP: the window server puts exactly this window in front
+        // ("i don't like that open foregrounds the entire terminal app"). Verified by the
+        // frontmost app; the Launch Services path below is the fallback.
+        JuliaLog.note("raise: element=\(entry.element != nil) wid=\(entry.element.flatMap(WindowRaise.windowID(of:)).map(String.init) ?? "nil") skylight=\(WindowRaise.available)")
+        if let el = entry.element, let wid = WindowRaise.windowID(of: el) {
+            if entry.minimized { AXUIElementSetAttributeValue(el, kAXMinimizedAttribute as CFString, kCFBooleanFalse) }
+            if await WindowRaise.bring(pid: entry.pid, windowID: wid, element: el) {
+                if entry.tab != nil || entry.browserTab != nil { _ = await WindowCatalog.focus(entry) }
+                WindowRaise.glow(windowID: wid, tint: tint)
+                JuliaLog.note("raised one window: \(app.localizedName ?? "") \(name) (verified)")
+                return .verified(method: "z-order", observed: "\(name) topmost\(where_(wid))")
+            }
+            JuliaLog.note("single-window raise NOT verified for \(name); falling back to app activation")
+        }
+        // A background app's own activation requests are ignored on macOS 14 — measured:
+        // NSApp.activate() never took, app.activate() reported success while the target
+        // stayed behind Chrome, and `open -g` did the same. What IS honoured from the
+        // background is a Launch Services open WITH activation — what `open -a` does.
+        // So: bring the app forward that way, then raise the exact window and tab.
+        guard let url = app.bundleURL else { return .failed(class: "unavailable", why: "\(app.localizedName ?? "That app") has no bundle to activate.") }
+        app.unhide()
+        if let window = entry.element { AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanFalse) }
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        config.createsNewApplicationInstance = false
+        let opened: Bool = await withCheckedContinuation { c in
+            NSWorkspace.shared.openApplication(at: url, configuration: config) { _, error in c.resume(returning: error == nil) }
+        }
+        guard opened else { return .failed(class: "unavailable", why: "Couldn’t bring \(app.localizedName ?? "that app") forward.") }
+        for _ in 0..<20 {
+            if NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid { break }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        if let window = entry.element {
+            AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
+            AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+        }
+        if entry.tab != nil || entry.browserTab != nil { _ = await WindowCatalog.focus(entry) }
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid else {
+            return .failed(class: "uncertain", why: "\(app.localizedName ?? "That app") didn’t come to the front.")
+        }
+        if let el = entry.element, let wid = WindowRaise.windowID(of: el) {
+            WindowRaise.glow(windowID: wid, tint: tint)
+            if WindowRaise.isTop(windowID: wid, pid: entry.pid) { return .verified(method: "z-order", observed: "\(name) topmost\(where_(wid)) (after app activation)") }
+        }
+        return .verified(method: "app-activated", observed: "the whole app came forward; window not verified")
     }
 
     /// Bring an app forward from the background — Launch Services with activation, the
@@ -573,17 +605,30 @@ enum JuliaKeychain {
     }
     func open(_ url: URL) {
         guard url.scheme == "velocity" else { return }
-        if let problem = perform(url) { notice?(problem) }
+        // velocity://run?id=<commandId> — the same-machine NUDGE for a row Julia.app just
+        // enqueued to this machine: the row is the act; the URL only shortens the wait.
+        if url.host == "run" {
+            guard let id = JuliaWorkspace.query(in: url, "id"), !id.isEmpty else { notice?("That run link names no command."); return }
+            guard let prefrontal, state == .paired else { notice?("Connect Velocity to Julia first."); return }
+            prefrontal.nudge(id: id)
+            return
+        }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let receipt = await self.perform(url)
+            JuliaLog.note("act \(url.host ?? "?") receipt: \(receipt.line)")
+            // A media pause that could not be measured is not worth a notice at every mic hold.
+            if case .failed(let cls, let why) = receipt, !(url.host == "media" && cls == "uncertain") { self.notice?(why) }
+        }
     }
     /// The one place a velocity:// URL is acted on — a same-machine click and a
-    /// prefrontal command run through the same branches. Returns nil when the act was
-    /// dispatched, else why it could not be (the caller notices or settles with it).
-    @discardableResult
-    func perform(_ url: URL) -> String? {
+    /// prefrontal command run through the same branches. RESOLVES WITH THE RECEIPT: every
+    /// branch awaits its own outcome and says how it saw it done, or why it did not.
+    func perform(_ url: URL) async -> ActReceipt {
         // The glow's colour rides on every act: blue = an answer, orange = it needs him.
         glowTint = Self.tint(named: JuliaWorkspace.query(in: url, "glow"))
         WindowRaise.currentTint = glowTint
-        guard url.scheme == "velocity" else { return "Not a velocity:// URL." }
+        guard url.scheme == "velocity" else { return .failed(class: "invalid", why: "Not a velocity:// URL.") }
         JuliaLog.note("act \(url.host ?? "?") received")
         let entries = allEntries?() ?? []
         // velocity://foreground?project=X — everything for that project, at once.
@@ -598,26 +643,37 @@ enum JuliaKeychain {
             let missing = wanted.count - placed.count
             JuliaLog.note("foreground \(project): \(wanted.count) keys from Julia (\(placed.count) open, \(missing) not found), \(named?.entries.count ?? 0) by name → \(members.count) windows")
             guard let lead = members.first(where: \.terminal) ?? members.first else {
-                return "Nothing is open for \(project) right now."
+                return .failed(class: "stale", why: "Nothing is open for \(project) right now.")
             }
-            Task { @MainActor [weak self] in
-                if await self?.foreground?(members, lead) != true { _ = await WindowCatalog.focus(lead) }
+            let grouped = await foreground?(members, lead) ?? false
+            if !grouped { _ = await WindowCatalog.focus(lead) }
+            let leadName = "“\(lead.title.prefix(40))”"
+            if let el = lead.element, let wid = WindowRaise.windowID(of: el), WindowRaise.isTop(windowID: wid, pid: lead.pid) {
+                return .verified(method: "z-order", observed: "\(members.count) window\(members.count == 1 ? "" : "s") of \(project) forward; \(leadName) topmost")
             }
-            return nil
+            if NSWorkspace.shared.frontmostApplication?.processIdentifier == lead.pid {
+                return .verified(method: "app-activated", observed: "\(members.count) window\(members.count == 1 ? "" : "s") of \(project) forward; \(lead.appName) active, \(leadName) not verified topmost")
+            }
+            return .failed(class: "uncertain", why: "Raised \(members.count) window\(members.count == 1 ? "" : "s") for \(project), but \(lead.appName) isn’t in front.")
         }
         // velocity://media?pause=1 | resume=1 — quiet the room while he talks.
         if url.host == "media" {
             let pausing = JuliaWorkspace.query(in: url, "pause") != nil
+            let before = JuliaHands.loudProcesses()
             // The ⏯ key first — instant, needs no setting — then the precise per-tab /
             // per-player path OFF the main thread (scripting 60 tabs takes seconds).
             if pausing { JuliaHands.pauseByKey(ifAnyPlaying: entries) } else { JuliaHands.resumeByKey() }
-            Task.detached(priority: .userInitiated) { [weak self] in
-                let problem = pausing ? JuliaHands.pauseVideos() : JuliaHands.resumeVideos()
-                if let problem, problem.contains("turned off") {
-                    await MainActor.run { self?.notice?("For per-tab pausing, turn on Chrome ▸ View ▸ Developer ▸ Allow JavaScript from Apple Events.") }
-                }
+            let problem = await Task.detached(priority: .userInitiated) { pausing ? JuliaHands.pauseVideos() : JuliaHands.resumeVideos() }.value
+            if let problem, problem.contains("turned off") {
+                notice?("For per-tab pausing, turn on Chrome ▸ View ▸ Developer ▸ Allow JavaScript from Apple Events.")
             }
-            return nil
+            if !pausing { return .verified(method: "self", observed: "resume sent to what was paused" + (problem.map { " · " + $0 } ?? "")) }
+            // THE FACT: fewer processes putting out sound than before the pause.
+            guard !before.isEmpty else { return .verified(method: "audio-silent", observed: "nothing was playing") }
+            try? await Task.sleep(for: .milliseconds(400))
+            let after = JuliaHands.loudProcesses()
+            if after.count < before.count { return .verified(method: "audio-silent", observed: "\(before.count - after.count) of \(before.count) sound source\(before.count == 1 ? "" : "s") went quiet") }
+            return .failed(class: "uncertain", why: "\(after.count) process\(after.count == 1 ? "" : "es") still putting out sound after the pause" + (problem.map { " · " + $0 } ?? ""))
         }
         // velocity://type?sig=…&handle=…&text=…&enter=1 — his words, into THAT conversation.
         if url.host == "type", let text = JuliaWorkspace.query(in: url, "text") {
@@ -628,24 +684,22 @@ enum JuliaKeychain {
                 // THE TAB ITSELF, wherever it is: Terminal selects it, Velocity brings Terminal
                 // forward, the words go in. No folder guess, no catalog, no title.
                 JuliaLog.note("type → tty \(tty) “\(target.entry.title.prefix(60))”")
-                Task { @MainActor [weak self] in
-                    let ok = await JuliaHands.type(text, enter: enter, into: target.entry) { [weak self] in
-                        guard let wid = target.select() else { return false }
-                        // The one Terminal window, in front — not every Terminal window.
-                        if await WindowRaise.bring(pid: target.entry.pid, windowID: wid) { WindowRaise.glow(windowID: wid, tint: self?.glowTint ?? .white) }
-                        else { await self?.activate(pid: target.entry.pid); _ = target.select() }
-                        // THE TAB, in front, verified — up to a second for a Space to switch.
-                        for _ in 0..<10 {
-                            if ConversationTTY.isFront(tty: tty) { return true }
-                            try? await Task.sleep(for: .milliseconds(100))
-                        }
-                        JuliaLog.note("tty \(tty) never became the front window's selected tab")
-                        return false
+                let ok = await JuliaHands.type(text, enter: enter, into: target.entry) { [weak self] in
+                    guard let wid = target.select() else { return false }
+                    // The one Terminal window, in front — not every Terminal window.
+                    if await WindowRaise.bring(pid: target.entry.pid, windowID: wid) { WindowRaise.glow(windowID: wid, tint: self?.glowTint ?? .white) }
+                    else { await self?.activate(pid: target.entry.pid); _ = target.select() }
+                    // THE TAB, in front, verified — up to a second for a Space to switch.
+                    for _ in 0..<10 {
+                        if ConversationTTY.isFront(tty: tty) { return true }
+                        try? await Task.sleep(for: .milliseconds(100))
                     }
-                    JuliaLog.note(ok ? "typed \(text.count) chars\(enter ? " + Enter" : "") into tty \(tty)" : "type FAILED: tty \(tty) — that tab never came to the front")
-                    if !ok { self?.notice?("Couldn’t type into that terminal (it didn’t come to the front).") }
+                    JuliaLog.note("tty \(tty) never became the front window's selected tab")
+                    return false
                 }
-                return nil
+                JuliaLog.note(ok ? "typed \(text.count) chars\(enter ? " + Enter" : "") into tty \(tty)" : "type FAILED: tty \(tty) — that tab never came to the front")
+                guard ok else { return .failed(class: "uncertain", why: "Couldn’t type into that terminal (it didn’t come to the front) — nothing was typed.") }
+                return await Self.typedReceipt(text: text, enter: enter, into: tty)
             }
             if let handle = JuliaWorkspace.query(in: url, "handle"), let d = JuliaJumpHandle.decode(handle) { entry = Self.resolve(d, in: entries) }
             if entry == nil, let sig = JuliaWorkspace.query(in: url, "sig") {
@@ -653,25 +707,27 @@ enum JuliaKeychain {
                 // typing into "the first" is how his words reached the wrong agent.
                 let here = entries.filter { $0.terminal && JuliaWorkspace.signature($0) == sig.lowercased() }
                 if here.count <= 1 { entry = Self.terminal(inFolder: sig, in: entries) }
-                else { return "\(here.count) terminals sit in that folder and I can't tell which one answered — nothing was typed." }
+                else { return .failed(class: "conflict", why: "\(here.count) terminals sit in that folder and I can't tell which one answered — nothing was typed.") }
             }
-            guard let target = entry else { JuliaLog.note("type: no terminal resolved (handle=\(JuliaWorkspace.query(in: url, "handle") != nil) tty=\(JuliaWorkspace.query(in: url, "tty") ?? "-") sig=\(JuliaWorkspace.query(in: url, "sig") ?? "-"))"); return "That conversation's terminal is no longer open — nothing was typed." }
+            guard let target = entry else {
+                JuliaLog.note("type: no terminal resolved (handle=\(JuliaWorkspace.query(in: url, "handle") != nil) tty=\(JuliaWorkspace.query(in: url, "tty") ?? "-") sig=\(JuliaWorkspace.query(in: url, "sig") ?? "-"))")
+                return .failed(class: "unavailable", why: "That conversation's terminal is no longer open — nothing was typed.")
+            }
             JuliaLog.note("type → \(target.appName) “\(target.title.prefix(60))”")
-            Task { @MainActor [weak self] in
-                let ok = await JuliaHands.type(text, enter: enter, into: target) { [weak self] in
-                    self?.raise(target)
-                    try? await Task.sleep(for: .milliseconds(500))
-                    return NSWorkspace.shared.frontmostApplication?.processIdentifier == target.pid
-                }
-                JuliaLog.note(ok ? "typed \(text.count) chars\(enter ? " + Enter" : "") into “\(target.title.prefix(60))”" : "type FAILED: “\(target.title.prefix(60))” never came to the front")
-                if !ok { self?.notice?("Couldn’t type into that terminal (it didn’t come to the front).") }
+            let ok = await JuliaHands.type(text, enter: enter, into: target) { [weak self] in
+                guard let self else { return false }
+                _ = await self.raise(target)
+                try? await Task.sleep(for: .milliseconds(500))
+                return NSWorkspace.shared.frontmostApplication?.processIdentifier == target.pid
             }
-            return nil
+            JuliaLog.note(ok ? "typed \(text.count) chars\(enter ? " + Enter" : "") into “\(target.title.prefix(60))”" : "type FAILED: “\(target.title.prefix(60))” never came to the front")
+            guard ok else { return .failed(class: "uncertain", why: "Couldn’t type into that terminal (it didn’t come to the front) — nothing was typed.") }
+            return await Self.typedReceipt(text: text, enter: enter, into: "“\(target.title.prefix(40))”")
         }
         // velocity://terminal?path=/abs/dir — a new terminal in that project.
         if url.host == "terminal" {
             guard let dir = JuliaWorkspace.terminalDirectory(JuliaWorkspace.query(in: url, "path")) else {
-                return "That project has no folder on this Mac to open a terminal in."
+                return .failed(class: "invalid", why: "That project has no folder on this Mac to open a terminal in.")
             }
             let running = NSWorkspace.shared.runningApplications.compactMap { app -> (pid: pid_t, bundle: String)? in
                 guard let id = app.bundleIdentifier, WindowCatalog.terminalIDs.contains(id) else { return nil }
@@ -679,31 +735,38 @@ enum JuliaKeychain {
             }
             let bundle = JuliaWorkspace.preferredTerminal(entries, running: running)
             guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle)
-                ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else { return "No terminal app is installed on this Mac." }
+                ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else { return .failed(class: "unavailable", why: "No terminal app is installed on this Mac.") }
+            let before = ConversationTTY.shellTTYs(inFolder: dir.path)
             let config = NSWorkspace.OpenConfiguration()
             config.createsNewApplicationInstance = false
-            NSWorkspace.shared.open([dir], withApplicationAt: app, configuration: config) { [weak self] _, error in
-                if let error { Task { @MainActor in self?.notice?("Couldn’t open a terminal there: " + error.localizedDescription) } }
+            let opened: Bool = await withCheckedContinuation { c in
+                NSWorkspace.shared.open([dir], withApplicationAt: app, configuration: config) { _, error in c.resume(returning: error == nil) }
             }
-            return nil
+            guard opened else { return .failed(class: "unavailable", why: "Couldn’t open a terminal in \(dir.lastPathComponent).") }
+            // THE FACT: a new shell tty in that folder, within 3 s.
+            for _ in 0..<10 {
+                try? await Task.sleep(for: .milliseconds(300))
+                if let fresh = ConversationTTY.shellTTYs(inFolder: dir.path).subtracting(before).sorted().first {
+                    return .verified(method: "tty-appeared", observed: "\(fresh) opened in \(dir.lastPathComponent)")
+                }
+            }
+            return .failed(class: "uncertain", why: "Asked \(app.deletingPathExtension().lastPathComponent) to open \(dir.lastPathComponent); no new shell appeared there within 3 s.")
         }
         // velocity://focus?sig=term:~/projects/x — the terminal in that folder (an answer's conversation).
         if url.host == "focus", JuliaWorkspace.query(in: url, "handle") == nil, let sig = JuliaWorkspace.query(in: url, "sig") {
             // The same lookup the handle path uses: exact folder, then folder NAME, then a
             // parent/child. (This branch kept its own exact-only match after that helper
             // was written, so what2do's "convex-app" tab was never found — silently.)
-            guard let entry = Self.terminal(inFolder: sig, in: entries) else { return "That conversation's terminal is no longer open." }
-            raise(entry)
-            return nil
+            guard let entry = Self.terminal(inFolder: sig, in: entries) else { return .failed(class: "unavailable", why: "That conversation's terminal is no longer open.") }
+            return await raise(entry)
         }
         // velocity://focus?project=X&window=<key> — one of them.
         if url.host == "focus", let key = JuliaWorkspace.query(in: url, "window") {
-            guard let entry = entries.first(where: { $0.id == key }) else { return "That window is no longer open." }
-            raise(entry)
-            return nil
+            guard let entry = entries.first(where: { $0.id == key }) else { return .failed(class: "stale", why: "That window is no longer open.") }
+            return await raise(entry)
         }
-        guard let handle = Self.handle(in: url) else { return "Velocity doesn’t know what to do with \(url.host ?? "that")." }
-        guard let destination = JuliaJumpHandle.decode(handle) else { return "That jump link isn’t one Velocity made." }
+        guard let handle = Self.handle(in: url) else { return .failed(class: "unsupported", why: "Velocity doesn’t know what to do with \(url.host ?? "that").") }
+        guard let destination = JuliaJumpHandle.decode(handle) else { return .failed(class: "invalid", why: "That jump link isn’t one Velocity made.") }
         // THE TAB, NOT ITS TITLE. A handle remembers the title it was minted under, and
         // that is right for "Action Required" (the title sits still while it waits). But
         // an agent's title changes every few seconds — a handle minted while it WORKED
@@ -714,26 +777,43 @@ enum JuliaKeychain {
         // window server puts that one window in front, a ring shows where.
         if let tty = destination.tty, let target = ConversationTTY.target(onTTY: tty) {
             JuliaLog.note("act focus: tab found by tty")
-            Task { @MainActor [weak self] in
-                guard let wid = target.select() else { return }
-                JuliaLog.note("act focus: tab selected")
-                if await WindowRaise.bring(pid: target.entry.pid, windowID: wid) {
-                    WindowRaise.glow(windowID: wid, tint: self?.glowTint ?? .white)
-                    JuliaLog.note("opened tty \(tty) — one window (verified)")
-                } else {
-                    JuliaLog.note("opened tty \(tty): single-window raise NOT verified; activating Terminal")
-                    await self?.activate(pid: target.entry.pid)
-                    _ = target.select()
-                }
+            guard let wid = target.select() else { return .failed(class: "stale", why: "That tab moved since Julia was told about it.") }
+            JuliaLog.note("act focus: tab selected")
+            if await WindowRaise.bring(pid: target.entry.pid, windowID: wid) {
+                WindowRaise.glow(windowID: wid, tint: glowTint)
+                JuliaLog.note("opened tty \(tty) — one window (verified)")
+                let space = WindowRaise.spaceNumber(of: wid).map { " on Space \($0)" } ?? ""
+                if ConversationTTY.isFront(tty: tty) { return .verified(method: "tty-front", observed: "\(tty) is the selected tab of Terminal’s front window, topmost\(space)") }
+                return .verified(method: "z-order", observed: "“\(target.entry.title.prefix(40))” topmost\(space); \(tty) not confirmed as its selected tab")
             }
-            return nil
+            JuliaLog.note("opened tty \(tty): single-window raise NOT verified; activating Terminal")
+            await activate(pid: target.entry.pid)
+            _ = target.select()
+            guard NSWorkspace.shared.frontmostApplication?.processIdentifier == target.entry.pid else { return .failed(class: "uncertain", why: "Terminal didn’t come to the front.") }
+            if ConversationTTY.isFront(tty: tty) { return .verified(method: "tty-front", observed: "Terminal activated; \(tty) is its front window’s selected tab") }
+            return .verified(method: "app-activated", observed: "the whole app came forward; window not verified")
         }
         guard let entry = Self.resolve(destination, in: entries)
                 ?? JuliaWorkspace.query(in: url, "sig").flatMap({ Self.terminal(inFolder: $0, in: entries) }) else {
-            return "That terminal closed since Julia was told about it."
+            return .failed(class: "stale", why: "That terminal closed since Julia was told about it.")
         }
         // Straight to the terminal — the palette never shows (see raise).
-        raise(entry)
-        return nil
+        return await raise(entry)
+    }
+
+    /// The receipt for words that went in: `keys-posted` (what was posted, where) upgraded
+    /// to `prompt-echoed` when Terminal's selected tab shows the tail of them — one
+    /// AppleScript, given 200 ms; no answer in time leaves the method at what was seen.
+    static func typedReceipt(text: String, enter: Bool, into where_: String) async -> ActReceipt {
+        let posted = "\(text.count) chars\(enter ? " + Enter" : "") into \(where_)"
+        let tail = String(text.suffix(40))
+        let echoed = await withTaskGroup(of: Bool.self) { group -> Bool in
+            group.addTask { await Task.detached(priority: .userInitiated) { ConversationTTY.promptEchoes(tail: tail) }.value }
+            group.addTask { try? await Task.sleep(for: .milliseconds(200)); return false }
+            let first = await group.next() ?? false
+            group.cancelAll()
+            return first
+        }
+        return echoed ? .verified(method: "prompt-echoed", observed: "the terminal shows the words — " + posted) : .verified(method: "keys-posted", observed: posted)
     }
 }

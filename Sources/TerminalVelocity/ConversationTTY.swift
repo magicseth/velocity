@@ -135,6 +135,38 @@ enum ConversationTTY {
         return NSAppleScript(source: source)?.executeAndReturnError(&err).stringValue == "/dev/" + tty
     }
 
+    /// DID THE WORDS LAND? The selected tab's contents, asked once of Terminal; true when
+    /// the tail of what was typed shows in the last lines. Bounded: the caller races this
+    /// against a short deadline (an Apple Event can stall) and treats "no answer" as not
+    /// upgraded — `keys-posted` stays the method, never a claim beyond what was seen.
+    static func promptEchoes(tail: String) -> Bool {
+        let want = tail.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard want.count >= 3 else { return false }
+        let source = """
+        tell application "Terminal"
+            if (count of windows) is 0 then return ""
+            return contents of selected tab of front window
+        end tell
+        """
+        var err: NSDictionary?
+        guard let contents = NSAppleScript(source: source)?.executeAndReturnError(&err).stringValue else { return false }
+        let recent = String(contents.suffix(1200)).replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        return recent.contains(want.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression))
+    }
+
+    /// The ttys of shells sitting in that folder right now — a `terminal.open` receipt is
+    /// a NEW one of these appearing (`tty-appeared`), not the open() call returning.
+    static func shellTTYs(inFolder dir: String) -> Set<String> {
+        let want = (dir as NSString).standardizingPath
+        var out: Set<String> = []
+        for pid in allPids() {
+            guard let name = processName(pid), ["zsh", "bash", "fish", "sh", "login", "-zsh", "-bash"].contains(name) else { continue }
+            guard let cwd = processCwd(pid), (cwd as NSString).standardizingPath == want, let tty = tty(of: pid) else { continue }
+            out.insert(tty)
+        }
+        return out
+    }
+
     /// `select` selects the tab and orders its window front inside Terminal, returning the
     /// window's id (the window server's), or nil when the tab moved.
     static func target(onTTY tty: String) -> (entry: WindowEntry, select: () -> CGWindowID?)? {
