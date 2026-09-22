@@ -85,12 +85,17 @@ final class AnswerWatcher {
         stream = s
     }
 
-    /// Transcripts are written many times a second while an agent works: gather, then read once.
+    /// Transcripts are written many times a second while an agent works: gather, then read
+    /// once. A THROTTLE, not a debounce: the first write schedules a read a second out and
+    /// later writes join that batch. The old timer restarted on every write, and the
+    /// moment he typed a reply the agent began writing constantly — so the read that
+    /// tells Julia "he asked something new" (which clears the old answer) waited for a
+    /// lull: measured 4–15 s of a stale answer on the strip.
     private func touched(_ paths: [String]) {
         pending.formUnion(paths)
-        flush?.cancel()
+        guard flush == nil else { return }
         flush = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            try? await Task.sleep(nanoseconds: 900_000_000)
             guard let self, !Task.isCancelled else { return }
             let batch = pending; pending = []
             for path in batch {
@@ -102,6 +107,8 @@ final class AnswerWatcher {
                 last[path] = e
                 report(e)
             }
+            flush = nil
+            if !pending.isEmpty { touched([]) }   // writes that arrived during the read
         }
     }
 
