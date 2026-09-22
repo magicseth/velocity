@@ -253,6 +253,48 @@ enum JuliaKeychain {
         Task { _ = try? await client.call(.exchange, args) }
     }
 
+    /// RAISE A WINDOW FROM THE BACKGROUND. macOS 14 lets an app hand activation to
+    /// another only while it is itself active (cooperative activation), and Velocity is
+    /// not active when Julia sends a URL — so WindowCatalog.focus quietly failed whenever
+    /// the target was not already frontmost (measured: works with Terminal in front,
+    /// nothing with Chrome in front; "clicking open in what2do doesn't bring it to the
+    /// forefront"). Velocity is a menu-bar app with nothing to show, so activating it for
+    /// a beat is invisible; then it yields to the target and steps back.
+    private func raise(_ entry: WindowEntry) {
+        Task { @MainActor [weak self] in
+            guard let app = NSRunningApplication(processIdentifier: entry.pid), !app.isTerminated else { return }
+            if NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid {
+                if await !WindowCatalog.focus(entry) { self?.openEntry?(entry) }
+                return
+            }
+            // A background app's own activation requests are ignored on macOS 14 — measured:
+            // NSApp.activate() never took, app.activate() reported success while the target
+            // stayed behind Chrome, and `open -g` did the same. What IS honoured from the
+            // background is a Launch Services open WITH activation — what `open -a` does.
+            // So: bring the app forward that way, then raise the exact window and tab.
+            guard let url = app.bundleURL else { return }
+            app.unhide()
+            if let window = entry.element { AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanFalse) }
+            let config = NSWorkspace.OpenConfiguration()
+            config.activates = true
+            config.createsNewApplicationInstance = false
+            NSWorkspace.shared.openApplication(at: url, configuration: config) { _, error in
+                Task { @MainActor in
+                    if error != nil { self?.notice?("Couldn’t bring \(app.localizedName ?? "that app") forward."); return }
+                    for _ in 0..<20 {
+                        if NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid { break }
+                        try? await Task.sleep(for: .milliseconds(50))
+                    }
+                    if let window = entry.element {
+                        AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
+                        AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+                    }
+                    if entry.tab != nil || entry.browserTab != nil { _ = await WindowCatalog.focus(entry) }
+                }
+            }
+        }
+    }
+
     /// The same tab of the same running process, whatever its title says now.
     static func sameTab(_ d: AttentionDestination, in entries: [WindowEntry]) -> WindowEntry? {
         guard NSRunningApplication(processIdentifier: d.pid)?.launchDate == d.launch else { return nil }
@@ -403,20 +445,18 @@ enum JuliaKeychain {
             return
         }
         // velocity://focus?sig=term:~/projects/x — the terminal in that folder (an answer's conversation).
-        if url.host == "focus", let sig = JuliaWorkspace.query(in: url, "sig") {
-            let here = entries.filter { JuliaWorkspace.signature($0) == sig.lowercased() }
-            guard let entry = here.first(where: { $0.attention != .none }) ?? here.first else { notice?("That conversation's terminal is no longer open."); return }
-            Task { @MainActor [weak self] in
-                if await !WindowCatalog.focus(entry) { self?.openEntry?(entry) }
-            }
+        if url.host == "focus", JuliaWorkspace.query(in: url, "handle") == nil, let sig = JuliaWorkspace.query(in: url, "sig") {
+            // The same lookup the handle path uses: exact folder, then folder NAME, then a
+            // parent/child. (This branch kept its own exact-only match after that helper
+            // was written, so what2do's "convex-app" tab was never found — silently.)
+            guard let entry = Self.terminal(inFolder: sig, in: entries) else { notice?("That conversation's terminal is no longer open."); return }
+            raise(entry)
             return
         }
         // velocity://focus?project=X&window=<key> — one of them.
         if url.host == "focus", let key = JuliaWorkspace.query(in: url, "window") {
             guard let entry = entries.first(where: { $0.id == key }) else { notice?("That window is no longer open."); return }
-            Task { @MainActor in
-                if await !WindowCatalog.focus(entry) { openEntry?(entry) }
-            }
+            raise(entry)
             return
         }
         guard let handle = Self.handle(in: url) else { return }
@@ -431,10 +471,7 @@ enum JuliaKeychain {
                 ?? JuliaWorkspace.query(in: url, "sig").flatMap({ Self.terminal(inFolder: $0, in: entries) }) else {
             notice?("That terminal closed since Julia was told about it."); return
         }
-        // Straight to the terminal. Velocity itself never comes forward: the
-        // board asked for that window, not for the palette.
-        Task { @MainActor in
-                if await !WindowCatalog.focus(entry) { openEntry?(entry) }
-            }
+        // Straight to the terminal — the palette never shows (see raise).
+        raise(entry)
     }
 }

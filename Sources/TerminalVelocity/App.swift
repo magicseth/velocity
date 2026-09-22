@@ -47,6 +47,11 @@ final class SearchPanel: NSPanel {
     var previousApp: NSRunningApplication?
     let terminalCache = TerminalCache()
     var scanning = false
+    var scanningTerminals = false
+    var scanningChromeMetadata = false
+    var chromeMetadataRevision = 0
+    let chromeMetadataQueue = DispatchQueue(label: "dev.terminalvelocity.chrome-metadata", qos: .userInitiated)
+    let terminalScanner = DispatchQueue(label: "dev.terminalvelocity.terminals", qos: .userInitiated)
     let scanner = DispatchQueue(label: "dev.terminalvelocity.windows", qos: .userInitiated)
     let shortcuts: [(String, UInt32, UInt32)] = [
         ("⌃⌥K", UInt32(controlKey | optionKey), UInt32(kVK_ANSI_K)),
@@ -237,7 +242,7 @@ final class SearchPanel: NSPanel {
         }
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, self.panel.isVisible, !self.model.trusted, AXIsProcessTrusted() else { return }
+                guard let self, self.panel.isVisible, !self.model.showHelp else { return }
                 self.refresh()
             }
         }
@@ -552,34 +557,123 @@ final class SearchPanel: NSPanel {
         refresh()
     }
 
-    func refresh() {
-        guard onboardingWindow?.isVisible != true else { return }
-        model.trusted = AXIsProcessTrusted()
-        guard model.trusted, !scanning, !model.cleanup.busy else { return }
-        lastCatalogRefresh = Date()
-        scanning = true
-        model.loading = true
+    func refreshChromeMetadata() {
+        guard model.browserTabsEnabled, !scanningChromeMetadata,
+              let app = NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.Chrome").first else { return }
+        scanningChromeMetadata = true
+        chromeMetadataQueue.async { [weak self] in
+            let result = BrowserTabs.scan(browserID: "com.google.Chrome")
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.scanningChromeMetadata = false
+                guard result.error == nil, !app.isTerminated else {
+                    self.model.closedTabs.observe([], complete: false, launch: app.launchDate)
+                    return
+                }
+                let prior = Dictionary(self.model.all.filter { $0.pid == app.processIdentifier }.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+                let entries = result.tabs.map { tab in
+                    let id = "\(app.processIdentifier):browser:\(tab.windowID):\(tab.tabID)"
+                    let old = prior[id]
+                    return WindowEntry(id: id, pid: app.processIdentifier, appName: app.localizedName ?? "Google Chrome",
+                        title: tab.title.isEmpty ? tab.url : tab.title, icon: app.icon, element: old?.element,
+                        minimized: tab.minimized, hidden: app.isHidden, terminal: false, tab: old?.tab,
+                        browserTab: tab, audio: old?.audio ?? .none, browser: true,
+                        browserProfile: WindowCatalog.profileName(windowTitle: tab.windowTitle, appName: app.localizedName ?? "Google Chrome") ?? old?.browserProfile,
+                        browserProfileIcon: old?.browserProfileIcon, browserPinned: old?.browserPinned ?? false)
+                }
+                self.chromeMetadataRevision += 1
+                self.snapshotGeneration += 1
+                self.model.all.removeAll { $0.pid == app.processIdentifier }
+                self.model.all.append(contentsOf: entries)
+                self.model.closedTabs.observe(self.model.all, complete: true, launch: app.launchDate)
+                self.model.filter(preserveSelection: true)
+            }
+        }
+    }
+
+    func refreshTerminals() {
+        guard !scanningTerminals else { return }
+        scanningTerminals = true
         let pid = previousApp?.processIdentifier
-        let browserTabsEnabled = model.browserTabsEnabled
-        scanner.async { [weak self] in
-            let snapshot = WindowCatalog.scan(frontmost: pid, browserTabsEnabled: browserTabsEnabled) { appPID, name, entries in
+        terminalScanner.async { [weak self] in
+            let snapshot = WindowCatalog.scan(frontmost: pid, scope: .terminals) { appPID, _, entries in
+                guard let entries else { return }
                 DispatchQueue.main.async {
                     guard let self else { return }
-                    self.model.scanningApp = name
-                    if let entries {
-                        self.snapshotGeneration += 1
-                        self.model.all.removeAll { $0.pid == appPID }
-                        self.model.all.append(contentsOf: entries)
-                        self.model.filter(preserveSelection: true)
-                    }
+                    self.snapshotGeneration += 1
+                    self.model.all.removeAll { $0.pid == appPID }
+                    self.model.all.append(contentsOf: entries)
+                    self.model.filter(preserveSelection: true)
                 }
             }
             self?.terminalCache.save(snapshot.entries)
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.snapshotGeneration += 1
-                self.model.closedTabs.observe(snapshot.entries, complete: snapshot.completeBrowsers.contains("com.google.Chrome"),
-                    launch: NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.Chrome").first?.launchDate)
+                self.model.all.removeAll { $0.terminal && $0.launchURL == nil }
+                self.model.all.append(contentsOf: snapshot.entries)
+                self.model.filter(preserveSelection: true)
+                self.observeAttention()
+                self.scanningTerminals = false
+                self.model.loading = self.scanning
+            }
+        }
+    }
+
+    func refresh() {
+        guard onboardingWindow?.isVisible != true else { return }
+        model.trusted = AXIsProcessTrusted()
+        guard model.trusted, !model.cleanup.busy else { return }
+        refreshTerminals()
+        refreshChromeMetadata()
+        model.loading = true
+        guard !scanning else { return }
+        lastCatalogRefresh = Date()
+        scanning = true
+        model.loading = true
+        let pid = previousApp?.processIdentifier
+        let browserTabsEnabled = model.browserTabsEnabled
+        let chromeRevision = chromeMetadataRevision
+        scanner.async { [weak self] in
+            let snapshot = WindowCatalog.scan(frontmost: pid, browserTabsEnabled: browserTabsEnabled, scope: .otherApps) { appPID, name, entries in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.model.scanningApp = name
+                    if self.chromeMetadataRevision != chromeRevision,
+                       self.model.all.contains(where: { $0.pid == appPID && $0.browserTab?.browserID == "com.google.Chrome" }) { return }
+                    if let entries {
+                        self.snapshotGeneration += 1
+                        let prior = Dictionary(self.model.all.filter { $0.pid == appPID }.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+                        let entries = entries.map { entry in
+                            guard entry.browserTab != nil, entry.element == nil, let old = prior[entry.id] else { return entry }
+                            var enriched = entry
+                            enriched.audio = old.audio
+                            enriched.browserProfile = entry.browserProfile ?? old.browserProfile
+                            enriched.browserProfileIcon = old.browserProfileIcon
+                            return enriched
+                        }
+                        self.model.all.removeAll { $0.pid == appPID }
+                        self.model.all.append(contentsOf: entries)
+                        self.model.filter(preserveSelection: true)
+                    }
+                }
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                // Other-app completion must not overwrite newer terminal results.
+                var snapshot = snapshot
+                snapshot.entries += self.model.all.filter { $0.terminal && $0.launchURL == nil }
+                if self.chromeMetadataRevision != chromeRevision,
+                   let chrome = NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.Chrome").first {
+                    let latest = self.model.all.filter { $0.pid == chrome.processIdentifier }
+                    snapshot.entries.removeAll { $0.pid == chrome.processIdentifier }
+                    snapshot.entries += latest
+                }
+                self.snapshotGeneration += 1
+                if self.chromeMetadataRevision == chromeRevision {
+                    self.model.closedTabs.observe(snapshot.entries, complete: snapshot.completeBrowsers.contains("com.google.Chrome"),
+                        launch: NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.Chrome").first?.launchDate)
+                }
                 self.model.all = snapshot.entries
                 self.resourceBroker.reconcile(snapshot.entries)
                 self.model.cleanup.observe(snapshot.entries)
@@ -588,8 +682,8 @@ final class SearchPanel: NSPanel {
                 self.observeAttention()
                 self.model.browserNotice = snapshot.notices.isEmpty ? nil : snapshot.notices.joined(separator: " · ")
                 self.model.filter(preserveSelection: true)
-                self.model.loading = false
-                self.model.scanningApp = nil
+                self.model.loading = self.scanningTerminals
+                self.model.scanningApp = self.scanningTerminals ? "terminals" : nil
                 self.scanning = false
             }
         }
@@ -747,6 +841,13 @@ final class SearchPanel: NSPanel {
             if let e = AnswerWatcher.parse(CommandLine.arguments[i + 1]) {
                 print("source=\(e.source) done=\(e.done) cwd=\(e.cwd ?? "-") id=\(e.externalId)\nQ: \(e.question.prefix(200))\nA: \((e.answer ?? "(none yet)").prefix(300))")
             } else { print("no exchange found in that transcript") }
+            return
+        }
+        // Debugging Open: which terminal would Velocity raise for a conversation's folder?
+        if let i = CommandLine.arguments.firstIndex(of: "--find-terminal"), CommandLine.arguments.indices.contains(i + 1) {
+            let entries = WindowCatalog.scan(frontmost: nil).entries
+            for e in entries where e.terminal { print("  \(JuliaWorkspace.signature(e))  ←  \(e.title.prefix(70))  [doc: \(e.documentPath ?? "-")]") }
+            if let e = JuliaLink.terminal(inFolder: CommandLine.arguments[i + 1], in: entries) { print("→ would raise: \(e.title.prefix(80))") } else { print("→ nothing found") }
             return
         }
         if CommandLine.arguments.contains("--list-windows") {
