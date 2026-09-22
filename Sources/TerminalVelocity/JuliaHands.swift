@@ -15,9 +15,11 @@ import Foundation
 enum JuliaHands {
     /// Keystrokes go ONLY to the terminal Velocity itself brought forward, and only
     /// once it is frontmost: never into whatever happens to have focus.
-    @MainActor static func type(_ text: String, enter: Bool, into entry: WindowEntry, after raised: @escaping () async -> Void) async -> Bool {
+    /// `raised` brings the exact terminal forward and returns whether it IS in front; false
+    /// means nothing is typed — the words never go to whichever window happened to be key.
+    @MainActor static func type(_ text: String, enter: Bool, into entry: WindowEntry, after raised: @escaping () async -> Bool) async -> Bool {
         guard entry.terminal, !text.isEmpty, text.count <= 4000 else { return false }
-        await raised()
+        guard await raised() else { return false }
         for _ in 0..<40 {
             if NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid { break }
             try? await Task.sleep(for: .milliseconds(50))

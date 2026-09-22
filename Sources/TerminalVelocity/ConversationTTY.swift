@@ -110,7 +110,8 @@ enum ConversationTTY {
         // A single-tab window is listed as a plain window.
         let windows = entries.filter { terminalPids.contains($0.pid) && $0.element != nil && !$0.isTab }
         if let window = windows.first(where: { same($0.title, tab.windowName) }) { return window }
-        JuliaLog.note("tty \(tty): window “\(tab.windowName.prefix(50))” not among \(groups.count) tabbed + \(windows.count) plain Terminal windows")
+        // Not in the catalog (another Space, most often): no entry — the tty in the handle
+        // still finds the tab when it is time to type. Not an error.
         return nil
     }
 
@@ -118,6 +119,20 @@ enum ConversationTTY {
     /// tab and orders its window front (it can, on any Space — the catalog only sees the
     /// current one), Velocity then activates Terminal the one way the background is allowed
     /// to (Launch Services, see JuliaLink.raise). Returns the tab's window name for the log.
+    /// Is the tab on that tty the selected tab of Terminal's FRONT window right now? The
+    /// keystrokes go to the key window; "Terminal is frontmost" is not enough — with
+    /// Terminal already in front on another window, his words landed in the wrong one.
+    static func isFront(tty: String) -> Bool {
+        let source = """
+        tell application "Terminal"
+            if (count of windows) is 0 then return "none"
+            return tty of selected tab of front window
+        end tell
+        """
+        var err: NSDictionary?
+        return NSAppleScript(source: source)?.executeAndReturnError(&err).stringValue == "/dev/" + tty
+    }
+
     static func target(onTTY tty: String) -> (entry: WindowEntry, select: () -> Bool)? {
         guard let tab = terminalTabs().first(where: { $0.tty == tty }),
               let app = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Terminal").first(where: { !$0.isTerminated }) else { return nil }
@@ -132,6 +147,9 @@ enum ConversationTTY {
                 set selected of t to true
                 set miniaturized of w to false
                 set index of w to 1
+                try
+                    set frontmost of w to true
+                end try
                 return "ok"
             end tell
             """

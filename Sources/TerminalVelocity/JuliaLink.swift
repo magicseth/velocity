@@ -490,11 +490,17 @@ enum JuliaKeychain {
                 JuliaLog.note("type → tty \(tty) “\(target.entry.title.prefix(60))”")
                 Task { @MainActor [weak self] in
                     let ok = await JuliaHands.type(text, enter: enter, into: target.entry) { [weak self] in
-                        guard target.select() else { return }
+                        guard target.select() else { return false }
                         await self?.activate(pid: target.entry.pid)
-                        try? await Task.sleep(for: .milliseconds(400))
+                        // THE TAB, in front, verified — up to a second for a Space to switch.
+                        for _ in 0..<10 {
+                            if ConversationTTY.isFront(tty: tty) { return true }
+                            try? await Task.sleep(for: .milliseconds(100))
+                        }
+                        JuliaLog.note("tty \(tty) never became the front window's selected tab")
+                        return false
                     }
-                    JuliaLog.note(ok ? "typed \(text.count) chars\(enter ? " + Enter" : "") into tty \(tty)" : "type FAILED: tty \(tty) — Terminal never came to the front")
+                    JuliaLog.note(ok ? "typed \(text.count) chars\(enter ? " + Enter" : "") into tty \(tty)" : "type FAILED: tty \(tty) — that tab never came to the front")
                     if !ok { self?.notice?("Couldn’t type into that terminal (it didn’t come to the front).") }
                 }
                 return
@@ -513,6 +519,7 @@ enum JuliaKeychain {
                 let ok = await JuliaHands.type(text, enter: enter, into: target) { [weak self] in
                     self?.raise(target)
                     try? await Task.sleep(for: .milliseconds(500))
+                    return NSWorkspace.shared.frontmostApplication?.processIdentifier == target.pid
                 }
                 JuliaLog.note(ok ? "typed \(text.count) chars\(enter ? " + Enter" : "") into “\(target.title.prefix(60))”" : "type FAILED: “\(target.title.prefix(60))” never came to the front")
                 if !ok { self?.notice?("Couldn’t type into that terminal (it didn’t come to the front).") }
