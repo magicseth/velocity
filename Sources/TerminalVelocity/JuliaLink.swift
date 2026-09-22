@@ -250,7 +250,12 @@ enum JuliaKeychain {
         if let cwd = e.cwd { args["cwd"] = cwd }
         if let answer = e.answer { args["answer"] = answer }
         if let at = e.answeredAt { args["answeredAt"] = at }
-        if let cwd = e.cwd, let jump = Self.jumpHandle(forFolder: cwd, in: allEntries?() ?? []) { args["jump"] = jump }
+        // THE TAB, NOT THE FOLDER: two agents can share a folder; the tty is the one.
+        let tty = ConversationTTY.tty(source: e.source, sessionId: e.sessionId, cwd: e.cwd, startedAt: e.askedAt)
+        let entries = allEntries?() ?? []
+        JuliaLog.note("report \(e.source) \(e.sessionId.prefix(8)) cwd=\(e.cwd ?? "-") tty=\(tty ?? "unresolved")")
+        if let tty, let jump = Self.jumpHandle(onTTY: tty, in: entries) { args["jump"] = jump }
+        else if let cwd = e.cwd, let jump = Self.jumpHandle(forFolder: cwd, in: entries, tty: tty) { args["jump"] = jump }
         Task { _ = try? await client.call(.exchange, args) }
     }
 
@@ -296,6 +301,24 @@ enum JuliaKeychain {
         }
     }
 
+    /// Bring an app forward from the background — Launch Services with activation, the
+    /// only request macOS 14 honours from a non-active app (see raise). Waits until it is.
+    @MainActor func activate(pid: pid_t) async {
+        guard let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated, let url = app.bundleURL else { return }
+        app.unhide()
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid { return }
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        config.createsNewApplicationInstance = false
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            NSWorkspace.shared.openApplication(at: url, configuration: config) { _, _ in c.resume() }
+        }
+        for _ in 0..<20 {
+            if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid { break }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+    }
+
     /// The same tab of the same running process, whatever its title says now.
     static func sameTab(_ d: AttentionDestination, in entries: [WindowEntry]) -> WindowEntry? {
         guard NSRunningApplication(processIdentifier: d.pid)?.launchDate == d.launch else { return nil }
@@ -318,15 +341,29 @@ enum JuliaKeychain {
         return pick(terms.filter { let s = JuliaWorkspace.signature($0); return s.hasPrefix(want + "/") || (want.hasPrefix(s + "/") && s.count > 8) })
     }
 
+    /// The exact tab on that tty — the conversation's own terminal.
+    static func jumpHandle(onTTY tty: String, in entries: [WindowEntry]) -> String? {
+        guard let entry = ConversationTTY.entry(onTTY: tty, in: entries),
+              let launch = NSRunningApplication(processIdentifier: entry.pid)?.launchDate,
+              let destination = AttentionDestination(entry: entry, launch: launch, tty: tty) else { return nil }
+        return JuliaJumpHandle.encode(destination)
+    }
     /// The terminal sitting in that folder — preferring one whose title shows an agent.
-    static func jumpHandle(forFolder cwd: String, in entries: [WindowEntry]) -> String? {
+    /// A guess when there are several; the tty rides along so a later resolve can do better.
+    static func jumpHandle(forFolder cwd: String, in entries: [WindowEntry], tty: String? = nil) -> String? {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let sig = "term:" + (cwd.hasPrefix(home) ? "~" + cwd.dropFirst(home.count) : cwd).lowercased()
         let here = entries.filter { $0.terminal && JuliaWorkspace.signature($0) == sig }
         guard let entry = here.first(where: { $0.attention != .none }) ?? here.first,
               let launch = NSRunningApplication(processIdentifier: entry.pid)?.launchDate,
-              let destination = AttentionDestination(entry: entry, launch: launch) else { return nil }
+              let destination = AttentionDestination(entry: entry, launch: launch, tty: tty) else { return nil }
         return JuliaJumpHandle.encode(destination)
+    }
+    /// Resolve a destination: by tty first (exact, survives every title change), then the
+    /// live window/tab, then the same tab by identity.
+    static func resolve(_ d: AttentionDestination, in entries: [WindowEntry]) -> WindowEntry? {
+        if let tty = d.tty, let e = ConversationTTY.entry(onTTY: tty, in: entries) { return e }
+        return d.liveEntry() ?? sameTab(d, in: entries)
     }
 
     /// Called after every scan: `attention` is what the notifier sees (done
@@ -446,14 +483,38 @@ enum JuliaKeychain {
         if url.host == "type", let text = JuliaWorkspace.query(in: url, "text") {
             let enter = JuliaWorkspace.query(in: url, "enter") == "1"
             var entry: WindowEntry?
-            if let handle = JuliaWorkspace.query(in: url, "handle"), let d = JuliaJumpHandle.decode(handle) { entry = d.liveEntry() ?? Self.sameTab(d, in: entries) }
-            if entry == nil, let sig = JuliaWorkspace.query(in: url, "sig") { entry = Self.terminal(inFolder: sig, in: entries) }
-            guard let target = entry else { notice?("That conversation's terminal is no longer open — nothing was typed."); return }
+            let tty = JuliaJumpHandle.decode(JuliaWorkspace.query(in: url, "handle") ?? "")?.tty ?? JuliaWorkspace.query(in: url, "tty")
+            if let tty, let target = ConversationTTY.target(onTTY: tty) {
+                // THE TAB ITSELF, wherever it is: Terminal selects it, Velocity brings Terminal
+                // forward, the words go in. No folder guess, no catalog, no title.
+                JuliaLog.note("type → tty \(tty) “\(target.entry.title.prefix(60))”")
+                Task { @MainActor [weak self] in
+                    let ok = await JuliaHands.type(text, enter: enter, into: target.entry) { [weak self] in
+                        guard target.select() else { return }
+                        await self?.activate(pid: target.entry.pid)
+                        try? await Task.sleep(for: .milliseconds(400))
+                    }
+                    JuliaLog.note(ok ? "typed \(text.count) chars\(enter ? " + Enter" : "") into tty \(tty)" : "type FAILED: tty \(tty) — Terminal never came to the front")
+                    if !ok { self?.notice?("Couldn’t type into that terminal (it didn’t come to the front).") }
+                }
+                return
+            }
+            if let handle = JuliaWorkspace.query(in: url, "handle"), let d = JuliaJumpHandle.decode(handle) { entry = Self.resolve(d, in: entries) }
+            if entry == nil, let sig = JuliaWorkspace.query(in: url, "sig") {
+                // A folder is a guess. With ONE terminal there it is a safe one; with several,
+                // typing into "the first" is how his words reached the wrong agent.
+                let here = entries.filter { $0.terminal && JuliaWorkspace.signature($0) == sig.lowercased() }
+                if here.count <= 1 { entry = Self.terminal(inFolder: sig, in: entries) }
+                else { notice?("\(here.count) terminals sit in that folder and I can't tell which one answered — nothing was typed."); return }
+            }
+            guard let target = entry else { JuliaLog.note("type: no terminal resolved (handle=\(JuliaWorkspace.query(in: url, "handle") != nil) tty=\(JuliaWorkspace.query(in: url, "tty") ?? "-") sig=\(JuliaWorkspace.query(in: url, "sig") ?? "-"))"); notice?("That conversation's terminal is no longer open — nothing was typed."); return }
+            JuliaLog.note("type → \(target.appName) “\(target.title.prefix(60))”")
             Task { @MainActor [weak self] in
                 let ok = await JuliaHands.type(text, enter: enter, into: target) { [weak self] in
                     self?.raise(target)
                     try? await Task.sleep(for: .milliseconds(500))
                 }
+                JuliaLog.note(ok ? "typed \(text.count) chars\(enter ? " + Enter" : "") into “\(target.title.prefix(60))”" : "type FAILED: “\(target.title.prefix(60))” never came to the front")
                 if !ok { self?.notice?("Couldn’t type into that terminal (it didn’t come to the front).") }
             }
             return
@@ -500,7 +561,7 @@ enum JuliaKeychain {
         // matched nothing by the time he clicked Open, and nothing happened. So: the
         // exact match first; then the same tab by identity; then any terminal in the
         // conversation's folder. Never a different process, never by title across windows.
-        guard let entry = destination.liveEntry() ?? Self.sameTab(destination, in: entries)
+        guard let entry = Self.resolve(destination, in: entries)
                 ?? JuliaWorkspace.query(in: url, "sig").flatMap({ Self.terminal(inFolder: $0, in: entries) }) else {
             notice?("That terminal closed since Julia was told about it."); return
         }

@@ -9,11 +9,15 @@ struct AttentionDestination: Codable {
     let entryID: String
     let windowKey: String
     let task: String
+    /// The terminal device the conversation's agent is attached to ("ttys001") — the one
+    /// identity that survives title changes and tells two tabs in one folder apart.
+    /// Optional so handles minted before it decode unchanged.
+    var tty: String? = nil
 
-    init?(entry: WindowEntry, launch: Date) {
+    init?(entry: WindowEntry, launch: Date, tty: String? = nil) {
         guard entry.terminal, let key = entry.windowKey else { return nil }
         self.pid = entry.pid; self.launch = launch; entryID = entry.id
-        windowKey = key; task = entry.attentionTaskTitle
+        windowKey = key; task = entry.attentionTaskTitle; self.tty = tty
     }
 
     func resolve(_ entries: [WindowEntry], launch: Date) -> WindowEntry? {
