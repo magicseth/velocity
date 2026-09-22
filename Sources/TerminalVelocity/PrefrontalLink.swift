@@ -68,6 +68,7 @@ struct PrefrontalCommand: Decodable, Equatable {
         var enter: Bool?
         var path: String?
         var pause: Bool?
+        var create: Bool?
         /// The ring's colour: the state's (blue = an answer, orange = it needs him).
         var glow: String?
     }
@@ -112,7 +113,7 @@ struct PrefrontalCommand: Decodable, Equatable {
             items = [args.pause == false ? "resume=1" : "pause=1"]
         case "terminal.open":
             host = "terminal"
-            items = [q("path", args.path)]
+            items = [q("path", args.path), args.create == true ? "create=1" : nil]
         default: return nil
         }
         if kind == "focus" || kind == "foreground" || kind == "type" { items.append(q("glow", args.glow)) }

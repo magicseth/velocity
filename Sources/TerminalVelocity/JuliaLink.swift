@@ -726,6 +726,20 @@ enum JuliaKeychain {
         }
         // velocity://terminal?path=/abs/dir — a new terminal in that project.
         if url.host == "terminal" {
+            // create=1: a project with no folder yet gets one — ONLY under ~/Projects, never a
+            // dotfolder, never nested inside another project's home ("i made a new project …
+            // but i can't figure out how to add a terminal window to it to start an agent").
+            if JuliaWorkspace.query(in: url, "create") == "1", let raw = JuliaWorkspace.query(in: url, "path") {
+                let projects = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Projects").standardizedFileURL.path
+                let url = URL(fileURLWithPath: raw).standardizedFileURL
+                let parent = url.deletingLastPathComponent().path
+                if parent == projects, !url.lastPathComponent.hasPrefix("."), !FileManager.default.fileExists(atPath: url.path) {
+                    do { try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false); JuliaLog.note("made folder \(url.lastPathComponent) under ~/Projects") }
+                    catch { return .failed(class: "unavailable", why: "Couldn't make ~/Projects/\(url.lastPathComponent): \(error.localizedDescription)") }
+                } else if parent != projects {
+                    return .failed(class: "invalid", why: "A new project folder goes under ~/Projects only.")
+                }
+            }
             guard let dir = JuliaWorkspace.terminalDirectory(JuliaWorkspace.query(in: url, "path")) else {
                 return .failed(class: "invalid", why: "That project has no folder on this Mac to open a terminal in.")
             }
