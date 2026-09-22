@@ -9,7 +9,18 @@ struct ChromeProfileIcon {
         let matches = profiles.filter { label == $0.name || label.hasSuffix("(" + $0.name + ")") }
         return matches.count == 1 ? matches[0].image : nil
     }
+    private static var cache: (mtime: Date, profiles: [ChromeProfileIcon])?
+    /// Loaded once per change of Chrome's Local State (its mtime), not once per scan —
+    /// reading it and decoding every profile image cost every palette round.
     static func load() -> [ChromeProfileIcon] {
+        let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Google/Chrome")
+        let mtime = (try? FileManager.default.attributesOfItem(atPath: root.appendingPathComponent("Local State").path)[.modificationDate] as? Date) ?? .distantPast
+        if let cache, cache.mtime == mtime { return cache.profiles }
+        let profiles = loadUncached()
+        cache = (mtime, profiles)
+        return profiles
+    }
+    static func loadUncached() -> [ChromeProfileIcon] {
         let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Google/Chrome")
         guard let data = try? Data(contentsOf: root.appendingPathComponent("Local State")), data.count < 5_000_000,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

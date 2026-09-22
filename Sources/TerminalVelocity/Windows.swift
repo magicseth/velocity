@@ -27,12 +27,18 @@ enum WindowCatalog {
 
     // Read tab controls, never terminal contents or browser page contents.
     // Apps differ in how deeply they nest the tab strip in their window chrome.
-    static func tabs(in window: AXUIElement) -> [(AXUIElement, String)] {
+    /// `budget`: how deep to look. Terminals and browsers keep their tabs anywhere in the
+    /// chrome; other apps' tab bars sit near the top, and a PDF in Preview is thousands of
+    /// elements of nothing (measured 660 ms per round) — a small budget finds the tabs and
+    /// stops.
+    static func tabs(in window: AXUIElement, budget: Int = 3000, seconds: TimeInterval = 2) -> [(AXUIElement, String)] {
         var found: [(AXUIElement, String)] = []
-        var remaining = 3000
+        var remaining = budget
+        let deadline = Date().addingTimeInterval(seconds)
         func walk(_ element: AXUIElement, depth: Int, inTabGroup: Bool) {
-            guard depth < 14, remaining > 0 else { return }
+            guard depth < 14, remaining > 0, Date() < deadline else { return }
             remaining -= 1
+            AXUIElementSetMessagingTimeout(element, 0.05)
             let role = Accessibility.attribute(element, kAXRoleAttribute) as? String ?? ""
             if ["AXTextArea", "AXWebArea", "AXTable", "AXOutline"].contains(role) { return }
             let subrole = Accessibility.attribute(element, kAXSubroleAttribute) as? String ?? ""
@@ -46,9 +52,14 @@ enum WindowCatalog {
             }
             let children = (role == kAXTabGroupRole ? Accessibility.attribute(element, "AXTabs") as? [AXUIElement] : nil)
                 ?? Accessibility.attribute(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
+            let before = found.count
             for child in children {
                 walk(child, depth: depth + 1, inTabGroup: inTabGroup || role == kAXTabGroupRole)
             }
+            // A window has one tab strip. Once a container has yielded tabs, the rest of the
+            // window is web content and toolbars — stop (85 Chrome windows walked to their
+            // budget every round otherwise).
+            if found.count > before, found.count > 1 || role == kAXTabGroupRole { remaining = 0 }
         }
         walk(window, depth: 0, inTabGroup: false)
         return found
@@ -154,17 +165,23 @@ enum WindowCatalog {
                            documentPath: documentPath(window))
     }
 
-    static func scan(frontmost: pid_t?, browserTabsEnabled: Bool = false) -> WindowSnapshot {
+    enum ScanScope { case all, terminals, otherApps }
+    static func scan(frontmost: pid_t?, browserTabsEnabled: Bool = false, scope: ScanScope = .all, progress: ((pid_t, String, [WindowEntry]?) -> Void)? = nil) -> WindowSnapshot {
         let running = NSWorkspace.shared.runningApplications
-        let audioPIDs = AudioActivity.activeAppPIDs(apps: running)
+        let audioPIDs: Set<pid_t> = scope == .terminals ? [] : AudioActivity.activeAppPIDs(apps: running)
         let regularApps = running.filter { $0.activationPolicy == .regular }
         let apps = running.filter { app in
+            let isTerminal = terminalIDs.contains(app.bundleIdentifier ?? "")
+            if scope == .terminals && !isTerminal || scope == .otherApps && isTerminal { return false }
             let ownedHelper = app.activationPolicy != .regular && regularApps.contains { owner in
                 guard let path = app.executableURL?.path ?? app.bundleURL?.path, let bundle = owner.bundleURL?.path else { return false }
                 return path.hasPrefix(bundle + "/")
             }
             return !ownedHelper && (app.activationPolicy == .regular || audioPIDs.contains(app.processIdentifier)) && app.processIdentifier != ProcessInfo.processInfo.processIdentifier
         }.sorted {
+            let firstTerminal = terminalIDs.contains($0.bundleIdentifier ?? "")
+            let secondTerminal = terminalIDs.contains($1.bundleIdentifier ?? "")
+            if firstTerminal != secondTerminal { return firstTerminal }
             if ($0.processIdentifier == frontmost) != ($1.processIdentifier == frontmost) { return $0.processIdentifier == frontmost }
             return ($0.localizedName ?? "") < ($1.localizedName ?? "")
         }
@@ -174,12 +191,29 @@ enum WindowCatalog {
         for app in apps {
             let pid = app.processIdentifier
             let name = app.localizedName ?? "Application"
+            let started = Date()
+            defer { JuliaLog.note("scan \(name): \(Int(Date().timeIntervalSince(started) * 1000)) ms") }
+            progress?(pid, name, nil)
             let terminal = terminalIDs.contains(app.bundleIdentifier ?? "")
             let browser = BrowserTabs.supported.contains(app.bundleIdentifier ?? "")
             let application = AXUIElementCreateApplication(pid)
             AXUIElementSetMessagingTimeout(application, 0.2)
             let windows = Accessibility.attribute(application, kAXWindowsAttribute) as? [AXUIElement] ?? []
             var appEntries: [WindowEntry] = []
+            // Publish scripted destinations before slower AX enrichment (audio,
+            // profile association and window controls) walks the browser chrome.
+            let scripted = browser && browserTabsEnabled ? BrowserTabs.scan(browserID: app.bundleIdentifier!) : nil
+            if let scripted, scripted.error == nil {
+                let earlyTabs = scripted.tabs.map { tab in
+                    WindowEntry(id: "\(pid):browser:\(tab.windowID):\(tab.tabID)", pid: pid, appName: name,
+                        title: tab.title.isEmpty ? tab.url : tab.title, icon: app.icon, element: nil,
+                        minimized: tab.minimized, hidden: app.isHidden, terminal: false,
+                        browserTab: tab, browser: true,
+                        browserProfile: profileName(windowTitle: tab.windowTitle, appName: name))
+                }
+                progress?(pid, name, earlyTabs)
+            }
+            let loopStart = Date()
             for window in windows {
                 AXUIElementSetMessagingTimeout(window, 0.15)
                 let title = (Accessibility.attribute(window, kAXTitleAttribute) as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -192,33 +226,45 @@ enum WindowCatalog {
                 appEntries.append(contentsOf: ChatProjects.scan(window: window, app: app))
                 appEntries.append(contentsOf: ConductorWorkspaces.scan(window: window, app: app))
                 appEntries.append(contentsOf: Conversations.scan(window: window, app: app))
-                for tab in tabs(in: window) {
+                // A tab's audio badge costs an AX read per tab (288 Chrome tabs ≈ 0.6 s a
+                // round); only an app that is producing sound can have a playing tab.
+                let playing = audioPIDs.contains(pid)
+                // A browser's tab strip is near the top of its window and its tabs are
+                // already known from scripting; a terminal's tabs can be anywhere.
+                let (budget, seconds) = terminal ? (3000, 2.0) : browser ? (700, 0.4) : (400, 0.25)
+                for tab in tabs(in: window, budget: budget, seconds: seconds) {
                     appEntries.append(WindowEntry(id: "\(pid):window:\(CFHash(window)):tab:\(CFHash(tab.0))", pid: pid,
                         appName: name, title: tab.1, icon: app.icon, element: window,
                         minimized: minimized, hidden: app.isHidden, terminal: terminal, tab: tab.0,
-                        audio: browser ? tabAudio(tab.0) : (audioPIDs.contains(pid) ? .appOutput : .none), browser: browser,
+                        audio: browser ? (playing ? tabAudio(tab.0) : .none) : (playing ? .appOutput : .none), browser: browser,
                         documentPath: documentPath(tab.0), browserProfile: browser ? profileName(windowTitle: title, appName: name) : nil,
                         representedWindowTitle: terminal && tabIsSelected(tab.0) == true && !title.isEmpty ? title : nil))
                 }
             }
-            if browser && browserTabsEnabled {
-                let result = BrowserTabs.scan(browserID: app.bundleIdentifier!)
+            if let result = scripted {
                 if let error = result.error { notices.append(error) }
                 else {
                     completeBrowsers.insert(app.bundleIdentifier!)
                     let accessibleTabs = appEntries.filter { $0.tab != nil }
+                    JuliaLog.note("scan \(name): \(accessibleTabs.count) AX tabs for \(result.tabs.count) scripted, \(windows.count) windows; window loop \(Int(Date().timeIntervalSince(loopStart) * 1000)) ms")
                     appEntries.removeAll { $0.tab != nil }
                     let windowAssociations = browserWindowAssociations(windows: appEntries.filter { !$0.isTab && $0.element != nil }, accessibleTabs: accessibleTabs, scriptTabs: result.tabs, appName: name)
+                    // ONCE, not per tab: 284 scripted × 280 accessible tabs re-cleaned and
+                    // re-filtered each time was the palette's half second.
+                    let byCleanTitle = Dictionary(grouping: accessibleTabs, by: { cleanTabTitle($0.title) })
+                    let scriptedTitleCount = Dictionary(result.tabs.map { ($0.title, 1) }, uniquingKeysWith: +)
+                    let scriptedPerWindow = Dictionary(result.tabs.map { ($0.windowID, 1) }, uniquingKeysWith: +)
+                    let byWindow = Dictionary(grouping: accessibleTabs, by: { $0.element.map { CFHash($0) } ?? 0 })
                     for tab in result.tabs {
-                        let matches = accessibleTabs.filter { cleanTabTitle($0.title) == tab.title }
+                        let matches = byCleanTitle[tab.title] ?? []
                         // Never attach one tab's speaker state to a different
                         // duplicate-title tab. Ambiguous matches remain unknown.
-                        var match = matches.count == 1 && result.tabs.filter({ $0.title == tab.title }).count == 1 ? matches.first : nil
+                        var match = matches.count == 1 && scriptedTitleCount[tab.title] == 1 ? matches.first : nil
                         let associatedWindow = windowAssociations[tab.windowID]
                         let matchedWindow = associatedWindow?.element
                         if let window = matchedWindow {
-                            let windowTabs = accessibleTabs.filter { $0.element.map { CFEqual($0, window) } == true }
-                            let scriptedCount = result.tabs.filter { $0.windowID == tab.windowID }.count
+                            let windowTabs = byWindow[CFHash(window)] ?? []
+                            let scriptedCount = scriptedPerWindow[tab.windowID] ?? 0
                             if windowTabs.count == scriptedCount, windowTabs.indices.contains(tab.index - 1),
                                cleanTabTitle(windowTabs[tab.index - 1].title) == tab.title {
                                 match = windowTabs[tab.index - 1]
@@ -249,8 +295,9 @@ enum WindowCatalog {
                 }
             }
             entries.append(contentsOf: appEntries)
+            progress?(pid, name, appEntries)
         }
-        return WindowSnapshot(entries: applyingBrowserAudio(entries) + installedApps(), notices: notices, completeBrowsers: completeBrowsers)
+        return WindowSnapshot(entries: applyingBrowserAudio(entries) + (scope == .terminals ? [] : installedApps()), notices: notices, completeBrowsers: completeBrowsers)
     }
 
     static func browserTitleWithoutAppSuffix(_ title: String, appName: String) -> String {

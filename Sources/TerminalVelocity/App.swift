@@ -243,6 +243,9 @@ final class SearchPanel: NSPanel {
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, self.panel.isVisible, !self.model.showHelp else { return }
+                // A round took 2.5 s and the next began at once: the palette was indexing
+                // for as long as it was open. Let a finished round age before the next.
+                if self.scanning || Date().timeIntervalSince(self.lastCatalogRefresh) < 8 { return }
                 self.refresh()
             }
         }

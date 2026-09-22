@@ -15,15 +15,20 @@ struct BrowserTab: Sendable {
 }
 
 enum BrowserTabs {
+    private static let scanLock = NSLock()
     static let supported: Set<String> = ["com.google.Chrome", "com.apple.Safari"]
 
     static func scan(browserID: String) -> (tabs: [BrowserTab], error: String?) {
         guard supported.contains(browserID) else { return ([], nil) }
+        scanLock.lock()
+        defer { scanLock.unlock() }
         let safari = browserID == "com.apple.Safari"
         let source = scanSource(browserID: browserID)
         var error: NSDictionary?
         guard let script = NSAppleScript(source: source) else { return ([], "Browser tab script could not be created") }
+        let t0 = Date()
         let result = script.executeAndReturnError(&error)
+        JuliaLog.note("browser scan \(browserID): \(Int(Date().timeIntervalSince(t0) * 1000)) ms, \(result.numberOfItems) tabs")
         if let error {
             let code = error[NSAppleScript.errorNumber] as? Int ?? 0
             let name = safari ? "Safari" : "Chrome"
@@ -48,6 +53,41 @@ enum BrowserTabs {
     static func scanSource(browserID: String) -> String {
         precondition(supported.contains(browserID))
         let safari = browserID == "com.apple.Safari"
+        if !safari {
+            return """
+            with timeout of 5 seconds
+                tell application id "com.google.Chrome"
+                    set output to {}
+                    set windowIDs to id of every window
+                    set windowNames to name of every window
+                    set windowMinimizedStates to minimized of every window
+                    set windowModes to mode of every window
+                    set activeIndices to active tab index of every window
+                    set allTabIDs to id of every tab of every window
+                    set allTabTitles to title of every tab of every window
+                    set allTabURLs to URL of every tab of every window
+                    set allTabLoading to loading of every tab of every window
+                    if windowIDs is not (id of every window) or allTabIDs is not (id of every tab of every window) then error "Tabs changed during lookup"
+                    repeat with i from 1 to count of windowIDs
+                        set windowID to item i of windowIDs
+                        set windowName to item i of windowNames
+                        set windowMinimized to item i of windowMinimizedStates
+                        set normalWindow to (item i of windowModes) is "normal"
+                        set activeIndex to item i of activeIndices
+                        set tabIDs to item i of allTabIDs
+                        set tabTitles to item i of allTabTitles
+                        set tabURLs to item i of allTabURLs
+                        set tabLoading to item i of allTabLoading
+                        if (count of tabTitles) is not (count of tabIDs) or (count of tabURLs) is not (count of tabIDs) or (count of tabLoading) is not (count of tabIDs) then error "Tabs changed during lookup"
+                        repeat with n from 1 to count of tabIDs
+                            set end of output to {windowID, item n of tabIDs, item n of tabTitles, item n of tabURLs, windowMinimized, windowName, n, n is activeIndex, item n of tabLoading, normalWindow}
+                        end repeat
+                    end repeat
+                    return output
+                end tell
+            end timeout
+            """
+        }
         return """
         with timeout of 5 seconds
             tell application id "\(browserID)"
@@ -65,11 +105,29 @@ enum BrowserTabs {
         """
     }
 
-    static func select(_ tab: BrowserTab, requireUnchanged: Bool = false) -> Bool {
+    static func select(_ tab: BrowserTab, requireUnchanged: Bool = false) async -> Bool {
         guard supported.contains(tab.browserID) else { return false }
-        var error: NSDictionary?
-        let result = NSAppleScript(source: selectionSource(tab, requireUnchanged: requireUnchanged))?.executeAndReturnError(&error)
-        return error == nil && result?.booleanValue == true
+        return await runSelectionScript(selectionSource(tab, requireUnchanged: requireUnchanged))
+    }
+
+    // Isolate AppleScript from the UI thread and from in-process catalog scans.
+    // Output is a single boolean; never pass titles through a shell.
+    static func runSelectionScript(_ source: String) async -> Bool {
+        await Task.detached(priority: .userInitiated) {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            process.arguments = ["-e", source]
+            let output = Pipe()
+            process.standardOutput = output
+            process.standardError = FileHandle.nullDevice
+            do { try process.run() } catch { return false }
+            let deadline = DispatchWorkItem { if process.isRunning { process.terminate() } }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 10, execute: deadline)
+            defer { deadline.cancel() }
+            process.waitUntilExit()
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            return process.terminationStatus == 0 && String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) == "true"
+        }.value
     }
 
     static func selectionSource(_ tab: BrowserTab, requireUnchanged: Bool = false) -> String {
@@ -78,26 +136,40 @@ enum BrowserTabs {
         if tab.browserID == "com.google.Chrome" {
             source = """
             tell application id "com.google.Chrome"
-                set candidates to {}
-                try
-                    set end of candidates to window id \(tab.windowID)
-                end try
-                repeat with otherWindow in windows
-                    if (id of otherWindow as integer) is not \(tab.windowID) then set end of candidates to contents of otherWindow
-                end repeat
-                repeat with w in candidates
-                    try
-                        set tabIDs to id of every tab of w
-                        repeat with n from 1 to count of tabIDs
-                            if (item n of tabIDs as integer) is \(tab.tabID) then
-                                \(requireUnchanged ? "if URL of tab n of w is not " + quote(tab.url) + " or title of tab n of w is not " + quote(tab.title) + " then return false" : "")
-                                set minimized of w to false
-                                set active tab index of w to n
-                                set index of w to 1
-                                return (id of active tab of w as integer) is \(tab.tabID)
-                            end if
+                repeat with attempt from 1 to 2
+                    set candidates to {}
+                    if attempt is 1 then
+                        try
+                            set end of candidates to window id \(tab.windowID)
+                        end try
+                    else
+                        repeat with otherWindow in windows
+                            if (id of otherWindow as integer) is not \(tab.windowID) then set end of candidates to contents of otherWindow
                         end repeat
-                    end try
+                    end if
+                    repeat with w in candidates
+                        try
+                            try
+                                if (id of tab \(max(1, tab.index)) of w as integer) is \(tab.tabID) then
+                                    \(requireUnchanged ? "if URL of tab " + String(max(1, tab.index)) + " of w is not " + quote(tab.url) + " or title of tab " + String(max(1, tab.index)) + " of w is not " + quote(tab.title) + " then return false" : "")
+                                    set active tab index of w to \(max(1, tab.index))
+                                    set minimized of w to false
+                                    set index of w to 1
+                                    return (id of active tab of w as integer) is \(tab.tabID)
+                                end if
+                            end try
+                            set tabIDs to id of every tab of w
+                            repeat with n from 1 to count of tabIDs
+                                if (item n of tabIDs as integer) is \(tab.tabID) then
+                                    \(requireUnchanged ? "if URL of tab n of w is not " + quote(tab.url) + " or title of tab n of w is not " + quote(tab.title) + " then return false" : "")
+                                    set minimized of w to false
+                                    set active tab index of w to n
+                                    set index of w to 1
+                                    return (id of active tab of w as integer) is \(tab.tabID)
+                                end if
+                            end repeat
+                        end try
+                    end repeat
                 end repeat
                 return false
             end tell
