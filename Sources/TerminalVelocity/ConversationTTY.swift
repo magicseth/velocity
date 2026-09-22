@@ -60,22 +60,24 @@ enum ConversationTTY {
     /// is not running or he has not allowed Velocity to control it.
     static func terminalTabs() -> [Tab] {
         guard NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Terminal").contains(where: { !$0.isTerminated }) else { return [] }
+        // ONE round trip, not sixty: "tty of every tab of every window" comes back as one
+        // nested list in a single Apple Event. Asking per tab (tty, selected, name — three
+        // events × twenty tabs) took 3.5 s of every Open ("can clicking open be a lot
+        // faster? it takes seconds now").
         let source = """
         tell application "Terminal"
+            set ttys to tty of every tab of every window
+            set sels to selected of every tab of every window
+            set names to name of every window
             set out to ""
-            set n to count of windows
-            repeat with wi from 1 to n
-                try
-                    set w to window wi
-                    set wn to name of w
-                    set m to count of tabs of w
-                    repeat with ti from 1 to m
-                        set t to tab ti of w
-                        set sel to "0"
-                        if selected of t then set sel to "1"
-                        set out to out & wi & "\t" & ti & "\t" & (tty of t) & "\t" & sel & "\t" & wn & linefeed
-                    end repeat
-                end try
+            repeat with wi from 1 to count of ttys
+                set wt to item wi of ttys
+                set ws to item wi of sels
+                repeat with ti from 1 to count of wt
+                    set sel to "0"
+                    if item ti of ws then set sel to "1"
+                    set out to out & wi & "\t" & ti & "\t" & (item ti of wt) & "\t" & sel & "\t" & (item wi of names) & linefeed
+                end repeat
             end repeat
             return out
         end tell

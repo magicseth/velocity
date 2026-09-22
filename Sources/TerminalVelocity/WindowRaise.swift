@@ -150,12 +150,12 @@ enum WindowRaise {
     /// every window, but at least the right one is among them). Nothing is reported as
     /// done that was not seen done.
     @MainActor static func bring(pid: pid_t, windowID: CGWindowID, element: AXUIElement? = nil) async -> Bool {
-        if showSpace(of: windowID) { try? await Task.sleep(for: .milliseconds(400)) }
+        if showSpace(of: windowID) { try? await Task.sleep(for: .milliseconds(250)) }
         guard front(pid: pid, windowID: windowID, element: element) else { return false }
         // 1. the app becomes active (the window server did that);
-        for _ in 0..<15 {
+        for _ in 0..<30 {
             if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid { break }
-            try? await Task.sleep(for: .milliseconds(40))
+            try? await Task.sleep(for: .milliseconds(20))
         }
         guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return false }
         if isTop(windowID: windowID, pid: pid) { return true }
@@ -165,9 +165,9 @@ enum WindowRaise {
         if let el = element ?? axWindow(pid: pid, windowID: windowID) {
             AXUIElementPerformAction(el, kAXRaiseAction as CFString)
         }
-        for _ in 0..<15 {
+        for _ in 0..<30 {
             if isTop(windowID: windowID, pid: pid) { return true }
-            try? await Task.sleep(for: .milliseconds(40))
+            try? await Task.sleep(for: .milliseconds(20))
         }
         return false
     }

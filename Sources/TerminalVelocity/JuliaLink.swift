@@ -584,6 +584,7 @@ enum JuliaKeychain {
         glowTint = Self.tint(named: JuliaWorkspace.query(in: url, "glow"))
         WindowRaise.currentTint = glowTint
         guard url.scheme == "velocity" else { return "Not a velocity:// URL." }
+        JuliaLog.note("act \(url.host ?? "?") received")
         let entries = allEntries?() ?? []
         // velocity://foreground?project=X — everything for that project, at once.
         if url.host == "foreground", let project = JuliaWorkspace.query(in: url, "project") {
@@ -712,8 +713,10 @@ enum JuliaKeychain {
         // THE TAB ITSELF when the handle knows its tty: Terminal selects it (any Space), the
         // window server puts that one window in front, a ring shows where.
         if let tty = destination.tty, let target = ConversationTTY.target(onTTY: tty) {
+            JuliaLog.note("act focus: tab found by tty")
             Task { @MainActor [weak self] in
                 guard let wid = target.select() else { return }
+                JuliaLog.note("act focus: tab selected")
                 if await WindowRaise.bring(pid: target.entry.pid, windowID: wid) {
                     WindowRaise.glow(windowID: wid, tint: self?.glowTint ?? .white)
                     JuliaLog.note("opened tty \(tty) — one window (verified)")
