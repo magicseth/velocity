@@ -361,19 +361,13 @@ enum JuliaKeychain {
             JuliaLog.note("raise: element=\(entry.element != nil) wid=\(entry.element.flatMap(WindowRaise.windowID(of:)).map(String.init) ?? "nil") skylight=\(WindowRaise.available)")
             if let el = entry.element, let wid = WindowRaise.windowID(of: el) {
                 if entry.minimized { AXUIElementSetAttributeValue(el, kAXMinimizedAttribute as CFString, kCFBooleanFalse) }
-                if WindowRaise.front(pid: entry.pid, windowID: wid, element: el) {
-                    for _ in 0..<12 {
-                        if NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid { break }
-                        try? await Task.sleep(for: .milliseconds(25))
-                    }
-                    if NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid {
-                        if entry.tab != nil || entry.browserTab != nil { _ = await WindowCatalog.focus(entry) }
-                        WindowRaise.glow(windowID: wid, tint: tint)
-                        JuliaLog.note("raised one window: \(app.localizedName ?? "") “\(entry.title.prefix(40))”")
-                        return
-                    }
-                    JuliaLog.note("single-window raise not honoured; falling back to app activation")
+                if await WindowRaise.bring(pid: entry.pid, windowID: wid, element: el) {
+                    if entry.tab != nil || entry.browserTab != nil { _ = await WindowCatalog.focus(entry) }
+                    WindowRaise.glow(windowID: wid, tint: tint)
+                    JuliaLog.note("raised one window: \(app.localizedName ?? "") “\(entry.title.prefix(40))” (verified)")
+                    return
                 }
+                JuliaLog.note("single-window raise NOT verified for “\(entry.title.prefix(40))”; falling back to app activation")
             }
             // A background app's own activation requests are ignored on macOS 14 — measured:
             // NSApp.activate() never took, app.activate() reported success while the target
@@ -637,8 +631,8 @@ enum JuliaKeychain {
                     let ok = await JuliaHands.type(text, enter: enter, into: target.entry) { [weak self] in
                         guard let wid = target.select() else { return false }
                         // The one Terminal window, in front — not every Terminal window.
-                        if !WindowRaise.front(pid: target.entry.pid, windowID: wid) { await self?.activate(pid: target.entry.pid) }
-                        else { WindowRaise.glow(windowID: wid, tint: self?.glowTint ?? .white) }
+                        if await WindowRaise.bring(pid: target.entry.pid, windowID: wid) { WindowRaise.glow(windowID: wid, tint: self?.glowTint ?? .white) }
+                        else { await self?.activate(pid: target.entry.pid); _ = target.select() }
                         // THE TAB, in front, verified — up to a second for a Space to switch.
                         for _ in 0..<10 {
                             if ConversationTTY.isFront(tty: tty) { return true }
@@ -720,10 +714,14 @@ enum JuliaKeychain {
         if let tty = destination.tty, let target = ConversationTTY.target(onTTY: tty) {
             Task { @MainActor [weak self] in
                 guard let wid = target.select() else { return }
-                if WindowRaise.front(pid: target.entry.pid, windowID: wid) {
+                if await WindowRaise.bring(pid: target.entry.pid, windowID: wid) {
                     WindowRaise.glow(windowID: wid, tint: self?.glowTint ?? .white)
-                    JuliaLog.note("opened tty \(tty) — one window")
-                } else { await self?.activate(pid: target.entry.pid) }
+                    JuliaLog.note("opened tty \(tty) — one window (verified)")
+                } else {
+                    JuliaLog.note("opened tty \(tty): single-window raise NOT verified; activating Terminal")
+                    await self?.activate(pid: target.entry.pid)
+                    _ = target.select()
+                }
             }
             return nil
         }

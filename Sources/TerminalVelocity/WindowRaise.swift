@@ -40,6 +40,74 @@ enum WindowRaise {
     }
 
     static var available: Bool { setFront != nil && getPSN != nil }
+
+    // MARK: Spaces — the window server's own calls (the same ones tiling managers use).
+    private typealias MainCID = @convention(c) () -> Int32
+    private typealias ActiveSpace = @convention(c) (Int32) -> UInt64
+    private typealias SpacesForWindows = @convention(c) (Int32, Int32, CFArray) -> Unmanaged<CFArray>?
+    private typealias ManagedDisplaySpaces = @convention(c) (Int32) -> Unmanaged<CFArray>?
+    private typealias SetCurrentSpace = @convention(c) (Int32, CFString, UInt64) -> Void
+    private static let mainCID: MainCID? = skylight.flatMap { dlsym($0, "SLSMainConnectionID") }.map { unsafeBitCast($0, to: MainCID.self) }
+    private static let activeSpace: ActiveSpace? = skylight.flatMap { dlsym($0, "SLSGetActiveSpace") }.map { unsafeBitCast($0, to: ActiveSpace.self) }
+    private static let spacesForWindows: SpacesForWindows? = skylight.flatMap { dlsym($0, "SLSCopySpacesForWindows") }.map { unsafeBitCast($0, to: SpacesForWindows.self) }
+    private static let managedDisplaySpaces: ManagedDisplaySpaces? = skylight.flatMap { dlsym($0, "SLSCopyManagedDisplaySpaces") }.map { unsafeBitCast($0, to: ManagedDisplaySpaces.self) }
+    private static let setCurrentSpace: SetCurrentSpace? = skylight.flatMap { dlsym($0, "SLSManagedDisplaySetCurrentSpace") }.map { unsafeBitCast($0, to: SetCurrentSpace.self) }
+
+    /// The Space a window is on (nil when unknown).
+    static func space(of windowID: CGWindowID) -> UInt64? {
+        guard let mainCID, let spacesForWindows else { return nil }
+        let arr = spacesForWindows(mainCID(), 0x7, [NSNumber(value: windowID)] as CFArray)?.takeRetainedValue() as? [NSNumber]
+        return arr?.first?.uint64Value
+    }
+
+    /// Switch to the window's Space when it is not the current one on its display. Returns
+    /// true when a switch was issued (the caller waits for it).
+    static func showSpace(of windowID: CGWindowID) -> Bool {
+        guard let mainCID, let activeSpace, let managedDisplaySpaces, let setCurrentSpace, let target = space(of: windowID) else { return false }
+        let cid = mainCID()
+        if activeSpace(cid) == target { return false }
+        guard let displays = managedDisplaySpaces(cid)?.takeRetainedValue() as? [[String: Any]] else { return false }
+        for d in displays {
+            guard let uuid = d["Display Identifier"] as? String, let spaces = d["Spaces"] as? [[String: Any]] else { continue }
+            let current = (d["Current Space"] as? [String: Any])?["id64"] as? UInt64
+            if spaces.contains(where: { ($0["id64"] as? UInt64) == target }) {
+                if current == target { return false }
+                setCurrentSpace(cid, uuid as CFString, target)
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Is this window the topmost normal window ON SCREEN (any app but ours) and its app
+    /// active? "Top of its own app" is not enough: after the window-server call a Chrome
+    /// window rose above other Chrome windows and stayed behind Terminal's.
+    static func isTop(windowID: CGWindowID, pid: pid_t) -> Bool {
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return false }
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return false }
+        let me = ProcessInfo.processInfo.processIdentifier
+        guard let mine = frame(of: windowID) else { return false }
+        for w in list where (w[kCGWindowLayer as String] as? Int ?? 0) == 0 && (w[kCGWindowOwnerPID as String] as? pid_t) != me {
+            guard let id = w[kCGWindowNumber as String] as? CGWindowID else { continue }
+            if id == windowID { return true }
+            // A window above ours on ANOTHER display does not hide it: only overlap counts.
+            if let b = w[kCGWindowBounds as String] as? [String: CGFloat], let x = b["X"], let y = b["Y"], let wd = b["Width"], let h = b["Height"],
+               let sh = NSScreen.screens.first?.frame.height {
+                let r = NSRect(x: x, y: sh - y - h, width: wd, height: h)
+                if r.intersects(mine) { return false }
+            }
+        }
+        return false
+    }
+
+    /// The accessibility window element for a window id (walks the app's windows).
+    static func axWindow(pid: pid_t, windowID: CGWindowID) -> AXUIElement? {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.3)
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) == .success, let windows = value as? [AXUIElement] else { return nil }
+        return windows.first { self.windowID(of: $0) == windowID }
+    }
     /// The colour the next glows use (set per act by JuliaLink from the URL).
     static var currentTint: NSColor = .white
 
@@ -74,6 +142,34 @@ enum WindowRaise {
         // app's main window is done after activation, by the caller, if it needs a tab.
         _ = element   // deliberately untouched here (see above)
         return true
+    }
+
+    /// THE ONE RELIABLE WAY IN: switch to the window's Space if it is elsewhere, put the
+    /// window in front through the window server, then VERIFY it is the app's topmost
+    /// window and the app is active — false means the caller falls back (app activation:
+    /// every window, but at least the right one is among them). Nothing is reported as
+    /// done that was not seen done.
+    @MainActor static func bring(pid: pid_t, windowID: CGWindowID, element: AXUIElement? = nil) async -> Bool {
+        if showSpace(of: windowID) { try? await Task.sleep(for: .milliseconds(400)) }
+        guard front(pid: pid, windowID: windowID, element: element) else { return false }
+        // 1. the app becomes active (the window server did that);
+        for _ in 0..<15 {
+            if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid { break }
+            try? await Task.sleep(for: .milliseconds(40))
+        }
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return false }
+        if isTop(windowID: windowID, pid: pid) { return true }
+        // 2. NOW the accessibility raise — with the app already active it orders this one
+        //    window above other apps' windows (before activation it made Terminal order
+        //    every window forward).
+        if let el = element ?? axWindow(pid: pid, windowID: windowID) {
+            AXUIElementPerformAction(el, kAXRaiseAction as CFString)
+        }
+        for _ in 0..<15 {
+            if isTop(windowID: windowID, pid: pid) { return true }
+            try? await Task.sleep(for: .milliseconds(40))
+        }
+        return false
     }
 
     /// The window's on-screen frame (Cocoa coordinates), from the window server.

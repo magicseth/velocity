@@ -50,12 +50,8 @@ extension WindowCatalog {
             // ONE BROWSER WINDOW: the tab is selected and its window ordered front inside the
             // browser; the window server then puts that window — the browser's topmost — in
             // front alone. Activating the app instead brought every browser window along.
-            if let wid = WindowRaise.topWindowID(pid: entry.pid), WindowRaise.front(pid: entry.pid, windowID: wid) {
-                for _ in 0..<12 {
-                    if NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid { break }
-                    try? await Task.sleep(for: .milliseconds(25))
-                }
-                if NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid { WindowRaise.glow(windowID: wid, tint: WindowRaise.currentTint); JuliaLog.note("focus: one browser window via window server"); return true }
+            if let wid = WindowRaise.topWindowID(pid: entry.pid), await WindowRaise.bring(pid: entry.pid, windowID: wid) {
+                WindowRaise.glow(windowID: wid, tint: WindowRaise.currentTint); JuliaLog.note("focus: one browser window via window server (verified)"); return true
             }
             JuliaLog.note("focus: browser window server raise not honoured; activating the app")
             if NSWorkspace.shared.frontmostApplication?.processIdentifier != entry.pid {
@@ -78,18 +74,14 @@ extension WindowCatalog {
         // ONE WINDOW, NOT THE APP ("i double clicked on docs, and it foregrounded way too
         // many windows"): the window server puts exactly this window in front. The app
         // activation below stays as the fallback.
-        if let window = entry.element, let wid = WindowRaise.windowID(of: window), WindowRaise.front(pid: entry.pid, windowID: wid, element: window) {
-            for _ in 0..<12 {
-                if NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid { break }
-                try? await Task.sleep(for: .milliseconds(25))
-            }
-            if NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid {
+        if let window = entry.element, let wid = WindowRaise.windowID(of: window) {
+            if await WindowRaise.bring(pid: entry.pid, windowID: wid, element: window) {
                 if entry.tab != nil { _ = await WindowCatalog.selectFocusedTab(entry) }
                 WindowRaise.glow(windowID: wid, tint: WindowRaise.currentTint)
-                JuliaLog.note("focus: one window via window server — \(entry.appName) “\(entry.title.prefix(30))”")
+                JuliaLog.note("focus: one window via window server — \(entry.appName) “\(entry.title.prefix(30))” (verified)")
                 return true
             }
-            JuliaLog.note("focus: window server raise not honoured for \(entry.appName); activating the app")
+            JuliaLog.note("focus: window server raise NOT verified for \(entry.appName) “\(entry.title.prefix(30))”; activating the app")
         } else {
             JuliaLog.note("focus: no window id for \(entry.appName) “\(entry.title.prefix(30))” (element=\(entry.element != nil)); activating the app")
         }
