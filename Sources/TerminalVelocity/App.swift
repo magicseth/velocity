@@ -301,6 +301,8 @@ final class SearchPanel: NSPanel {
                 }
                 self.model.memory.observe(entry.memoryKey)
                 if !self.model.all.contains(where: { $0.memoryKey == entry.memoryKey }) { self.model.all.append(entry) }
+                // NOW, for Julia: the window his hands are on (sent once per change, not per tick).
+                self.julia.now(entry)
             }
         }
     }

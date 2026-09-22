@@ -111,11 +111,15 @@ struct JuliaClient {
     }
 
     func call(_ function: Function, _ args: [String: Any]) async throws -> Any? {
-        var request = URLRequest(url: endpoint.appendingPathComponent("api/\(function.kind)"))
+        try await call(path: function.rawValue, kind: function.kind, args)
+    }
+    /// The same transport for prefrontal/1 functions (PrefrontalFunction) — all mutations.
+    func call(path: String, kind: String = "mutation", _ args: [String: Any]) async throws -> Any? {
+        var request = URLRequest(url: endpoint.appendingPathComponent("api/\(kind)"))
         request.httpMethod = "POST"
         request.timeoutInterval = 20
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["path": function.rawValue, "args": args, "format": "json"])
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["path": path, "args": args, "format": "json"])
         let session = URLSession(configuration: .ephemeral, delegate: NoRedirects(), delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
         let (data, response) = try await session.data(for: request)
@@ -125,7 +129,7 @@ struct JuliaClient {
         if body["status"] as? String == "success" { return body["value"] }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         let detail = (body["errorMessage"] as? String).map { String($0.prefix(300)) } ?? "HTTP \(status)"
-        throw Failure(message: "\(function.rawValue) failed: \(detail)")
+        throw Failure(message: "\(path) failed: \(detail)")
     }
 }
 
@@ -180,6 +184,11 @@ enum JuliaKeychain {
     private var pendingReports: [JuliaReport]?
     private let store = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/Velocity/julia-reports.json")
+    /// prefrontal/1: commands addressed to this Mac arrive here by subscription.
+    private var prefrontal: PrefrontalLink?
+    private var machineObservers: [NSObjectProtocol] = []
+    /// The last `now` sent: an activation is reported once, not on every 1 s activity tick.
+    private var lastNow: (app: String, key: String)?
 
     init() {
         token = JuliaKeychain.token()
@@ -187,6 +196,69 @@ enum JuliaKeychain {
         if let data = try? Data(contentsOf: store), let saved = try? JSONDecoder().decode([JuliaReport].self, from: data) {
             reporter.restore(saved, now: Date())
         }
+        let center = NSWorkspace.shared.notificationCenter
+        for (name, machineState) in [(NSWorkspace.willSleepNotification, "asleep"), (NSWorkspace.didWakeNotification, "awake"),
+                                     (NSWorkspace.screensDidSleepNotification, "asleep"), (NSWorkspace.screensDidWakeNotification, "awake")] {
+            machineObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.reportMachineState(machineState) }
+            })
+        }
+        if state == .paired { joinPrefrontal() }
+    }
+
+    // MARK: prefrontal/1 — this Mac as ONE machine
+
+    private static var harvesterVersion: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0" }
+
+    /// Register this machine (hardware id, name, what Velocity can sense and do) and
+    /// subscribe to its command queue. On every paired launch and on pairing success.
+    private func joinPrefrontal() {
+        guard state == .paired, let client = try? JuliaClient() else { return }
+        let args: [String: Any] = ["token": token, "protocol": PrefrontalFunction.protocolVersion,
+            "machineId": MachineIdentity.machineId, "name": MachineIdentity.name, "platform": MachineIdentity.platform,
+            "harvester": ["name": "velocity", "version": Self.harvesterVersion], "capabilities": PrefrontalFunction.capabilities]
+        Task { @MainActor in
+            do {
+                _ = try await client.call(path: PrefrontalFunction.register, args)
+                JuliaLog.note("prefrontal: registered \(MachineIdentity.name) as \(MachineIdentity.machineId.prefix(8)) (velocity \(Self.harvesterVersion))")
+            } catch { JuliaLog.note("prefrontal: register failed: \(error.localizedDescription.prefix(200))") }
+        }
+        if prefrontal == nil {
+            let link = PrefrontalLink(endpoint: client.endpoint)
+            link.perform = { [weak self] command in self?.perform(command) }
+            prefrontal = link
+        }
+        prefrontal?.start(token: token)
+    }
+    private func leavePrefrontal() { prefrontal?.stop() }
+
+    private func reportMachineState(_ machineState: String) {
+        guard state == .paired, let client = try? JuliaClient() else { return }
+        JuliaLog.note("prefrontal: machine \(machineState)")
+        let args: [String: Any] = ["token": token, "machineId": MachineIdentity.machineId, "state": machineState]
+        Task { do { _ = try await client.call(path: PrefrontalFunction.machineState, args) } catch { JuliaLog.note("prefrontal: machineState failed: \(error.localizedDescription.prefix(200))") } }
+    }
+
+    /// NOW: what his hands are on. Sent when the frontmost window changes (App.swift's
+    /// activation tracking hands the focused entry here) — an event, never a timer.
+    func now(_ entry: WindowEntry) {
+        guard state == .paired else { return }
+        let sig = JuliaWorkspace.signature(entry)
+        let key = sig
+        if let last = lastNow, last.app == entry.appName, last.key == key { return }
+        lastNow = (entry.appName, key)
+        guard let client = try? JuliaClient() else { return }
+        var args: [String: Any] = ["token": token, "machineId": MachineIdentity.machineId, "app": entry.appName, "idle": false]
+        if !JuliaWorkspace.looksSensitive(entry.title) { args["title"] = String(entry.title.prefix(140)) }
+        if !sig.hasPrefix("win:") { args["sig"] = sig }
+        Task { do { _ = try await client.call(path: PrefrontalFunction.now, args) } catch { JuliaLog.note("prefrontal: now failed: \(error.localizedDescription.prefix(200))") } }
+    }
+
+    /// A command from another surface, run through the same velocity:// handling a
+    /// same-machine click uses. Nil = dispatched; a string = why it could not be.
+    private func perform(_ command: PrefrontalCommand) -> String? {
+        guard let url = command.velocityURL else { return "Velocity can't run a \(command.kind) with those arguments." }
+        return perform(url)
     }
 
     var menuTitle: String {
@@ -202,7 +274,7 @@ enum JuliaKeychain {
         case .unpaired: pair()
         case .pairing: pairingTask?.cancel(); state = .unpaired; changed?()
         case .paired:
-            pairingTask?.cancel(); JuliaKeychain.forget(); token = ""; state = .unpaired
+            pairingTask?.cancel(); leavePrefrontal(); JuliaKeychain.forget(); token = ""; state = .unpaired
             reporter = JuliaReporter(); try? FileManager.default.removeItem(at: store); changed?()
         }
     }
@@ -226,6 +298,7 @@ enum JuliaKeychain {
                         guard let token = status?["token"] as? String, token.count >= 16 else { throw JuliaClient.Failure(message: "Julia claimed the code without a token.") }
                         try JuliaKeychain.save(token)
                         self?.token = token; self?.state = .paired; self?.changed?()
+                        self?.joinPrefrontal()
                         self?.notice?("Connected to Julia. Agents that need you now show on her project strip.")
                         return
                     case "expired", "missing": throw JuliaClient.Failure(message: "The pairing code \(code) expired before it was entered.")
@@ -246,7 +319,7 @@ enum JuliaKeychain {
         guard state == .paired, let client = try? JuliaClient() else { return }
         var args: [String: Any] = ["token": token, "externalId": e.externalId, "source": e.source, "sessionId": e.sessionId,
             "project": e.cwd.map { ($0 as NSString).lastPathComponent } ?? e.source, "question": e.question,
-            "askedAt": e.askedAt, "done": e.done]
+            "askedAt": e.askedAt, "done": e.done, "machineId": MachineIdentity.machineId]
         if let cwd = e.cwd { args["cwd"] = cwd }
         if let answer = e.answer { args["answer"] = answer }
         if let at = e.answeredAt { args["answeredAt"] = at }
@@ -412,20 +485,20 @@ enum JuliaKeychain {
             do {
                 for report in diff.report {
                     var args: [String: Any] = ["token": token, "externalId": report.externalId, "project": report.project,
-                        "subtask": report.subtask, "source": "velocity"]
+                        "subtask": report.subtask, "source": "velocity", "machineId": MachineIdentity.machineId]
                     if let handle = report.jumpHandle { args["jumpHandle"] = handle }
                     _ = try await client.call(.report, args)
                 }
                 for id in diff.resolve { _ = try await client.call(.resolve, ["token": token, "externalId": id]) }
                 for (project, windows) in workspaceChanges {
-                    let list: [[String: Any]] = windows.map { w in
-                        var d: [String: Any] = ["key": w.key, "kind": w.kind, "app": w.app, "title": w.title]
-                        if let state = w.state { d["state"] = state }
-                        if let task = w.task { d["task"] = task }
-                        if let sig = w.sig { d["sig"] = sig }
-                        return d
-                    }
-                    _ = try await client.call(.workspace, ["token": token, "project": project, "windows": list, "source": "velocity"])
+                    _ = try await client.call(.workspace, ["token": token, "project": project, "windows": Self.wire(windows), "source": "velocity"])
+                }
+                // DUAL-WRITE (prefrontal/1): the same manifest, under this machine's id, as ONE
+                // snapshot — every non-empty bucket plus `*`. Best-effort while the component
+                // lands: a refusal here must not reset the board's reporter above.
+                if !workspaceChanges.isEmpty {
+                    do { _ = try await client.call(path: PrefrontalFunction.observe, ["token": token, "machineId": MachineIdentity.machineId, "buckets": Self.observation(workspace, order: projectTitles)]) }
+                    catch { JuliaLog.note("prefrontal: observe failed: \(error.localizedDescription.prefix(200))") }
                 }
             } catch {
                 // The next scan re-reports whatever still differs; the board's
@@ -442,6 +515,29 @@ enum JuliaKeychain {
         try? FileManager.default.createDirectory(at: store.deletingLastPathComponent(), withIntermediateDirectories: true)
         if let data = try? JSONEncoder().encode(reports) { try? data.write(to: store, options: .atomic) }
     }
+    /// A window list as the wire carries it (attention:workspace and prefrontal:observe agree).
+    /// No `tty`: naming a Terminal tab's tty costs an Apple Events round trip per scan.
+    static func wire(_ windows: [JuliaWindow]) -> [[String: Any]] {
+        windows.map { w in
+            var d: [String: Any] = ["key": w.key, "kind": w.kind, "app": w.app, "title": w.title]
+            if let state = w.state { d["state"] = state }
+            if let task = w.task { d["task"] = task }
+            if let sig = w.sig { d["sig"] = sig }
+            return d
+        }
+    }
+    /// prefrontal/1 WindowsReport.buckets: non-empty project buckets in his order, `*`
+    /// always, at most MAX_BUCKETS_PER_MACHINE (12) — the component's read budget.
+    static func observation(_ manifest: [String: [JuliaWindow]], order: [String] = [], limit: Int = 12) -> [[String: Any]] {
+        let ordered = order + manifest.keys.filter { $0 != "*" && !order.contains($0) }.sorted()
+        var buckets: [[String: Any]] = ordered.compactMap { name in
+            guard let windows = manifest[name], !windows.isEmpty else { return nil }
+            return ["bucket": name, "windows": wire(Array(windows.prefix(40)))]
+        }
+        buckets = Array(buckets.prefix(limit - 1))
+        buckets.append(["bucket": "*", "windows": wire(Array((manifest["*"] ?? []).prefix(40)))])
+        return buckets
+    }
 
     /// velocity://focus?handle=<jump handle> — the board sending him back to the
     /// exact terminal. Resolution is the notification's: same process launch,
@@ -454,6 +550,14 @@ enum JuliaKeychain {
     }
     func open(_ url: URL) {
         guard url.scheme == "velocity" else { return }
+        if let problem = perform(url) { notice?(problem) }
+    }
+    /// The one place a velocity:// URL is acted on — a same-machine click and a
+    /// prefrontal command run through the same branches. Returns nil when the act was
+    /// dispatched, else why it could not be (the caller notices or settles with it).
+    @discardableResult
+    func perform(_ url: URL) -> String? {
+        guard url.scheme == "velocity" else { return "Not a velocity:// URL." }
         let entries = allEntries?() ?? []
         // velocity://foreground?project=X — everything for that project, at once.
         if url.host == "foreground", let project = JuliaWorkspace.query(in: url, "project") {
@@ -467,12 +571,12 @@ enum JuliaKeychain {
             let missing = wanted.count - placed.count
             JuliaLog.note("foreground \(project): \(wanted.count) keys from Julia (\(placed.count) open, \(missing) not found), \(named?.entries.count ?? 0) by name → \(members.count) windows")
             guard let lead = members.first(where: \.terminal) ?? members.first else {
-                notice?("Nothing is open for \(project) right now."); return
+                return "Nothing is open for \(project) right now."
             }
             Task { @MainActor [weak self] in
                 if await self?.foreground?(members, lead) != true { _ = await WindowCatalog.focus(lead) }
             }
-            return
+            return nil
         }
         // velocity://media?pause=1 | resume=1 — quiet the room while he talks.
         if url.host == "media" {
@@ -486,7 +590,7 @@ enum JuliaKeychain {
                     await MainActor.run { self?.notice?("For per-tab pausing, turn on Chrome ▸ View ▸ Developer ▸ Allow JavaScript from Apple Events.") }
                 }
             }
-            return
+            return nil
         }
         // velocity://type?sig=…&handle=…&text=…&enter=1 — his words, into THAT conversation.
         if url.host == "type", let text = JuliaWorkspace.query(in: url, "text") {
@@ -512,7 +616,7 @@ enum JuliaKeychain {
                     JuliaLog.note(ok ? "typed \(text.count) chars\(enter ? " + Enter" : "") into tty \(tty)" : "type FAILED: tty \(tty) — that tab never came to the front")
                     if !ok { self?.notice?("Couldn’t type into that terminal (it didn’t come to the front).") }
                 }
-                return
+                return nil
             }
             if let handle = JuliaWorkspace.query(in: url, "handle"), let d = JuliaJumpHandle.decode(handle) { entry = Self.resolve(d, in: entries) }
             if entry == nil, let sig = JuliaWorkspace.query(in: url, "sig") {
@@ -520,9 +624,9 @@ enum JuliaKeychain {
                 // typing into "the first" is how his words reached the wrong agent.
                 let here = entries.filter { $0.terminal && JuliaWorkspace.signature($0) == sig.lowercased() }
                 if here.count <= 1 { entry = Self.terminal(inFolder: sig, in: entries) }
-                else { notice?("\(here.count) terminals sit in that folder and I can't tell which one answered — nothing was typed."); return }
+                else { return "\(here.count) terminals sit in that folder and I can't tell which one answered — nothing was typed." }
             }
-            guard let target = entry else { JuliaLog.note("type: no terminal resolved (handle=\(JuliaWorkspace.query(in: url, "handle") != nil) tty=\(JuliaWorkspace.query(in: url, "tty") ?? "-") sig=\(JuliaWorkspace.query(in: url, "sig") ?? "-"))"); notice?("That conversation's terminal is no longer open — nothing was typed."); return }
+            guard let target = entry else { JuliaLog.note("type: no terminal resolved (handle=\(JuliaWorkspace.query(in: url, "handle") != nil) tty=\(JuliaWorkspace.query(in: url, "tty") ?? "-") sig=\(JuliaWorkspace.query(in: url, "sig") ?? "-"))"); return "That conversation's terminal is no longer open — nothing was typed." }
             JuliaLog.note("type → \(target.appName) “\(target.title.prefix(60))”")
             Task { @MainActor [weak self] in
                 let ok = await JuliaHands.type(text, enter: enter, into: target) { [weak self] in
@@ -533,12 +637,12 @@ enum JuliaKeychain {
                 JuliaLog.note(ok ? "typed \(text.count) chars\(enter ? " + Enter" : "") into “\(target.title.prefix(60))”" : "type FAILED: “\(target.title.prefix(60))” never came to the front")
                 if !ok { self?.notice?("Couldn’t type into that terminal (it didn’t come to the front).") }
             }
-            return
+            return nil
         }
         // velocity://terminal?path=/abs/dir — a new terminal in that project.
         if url.host == "terminal" {
             guard let dir = JuliaWorkspace.terminalDirectory(JuliaWorkspace.query(in: url, "path")) else {
-                notice?("That project has no folder on this Mac to open a terminal in."); return
+                return "That project has no folder on this Mac to open a terminal in."
             }
             let running = NSWorkspace.shared.runningApplications.compactMap { app -> (pid: pid_t, bundle: String)? in
                 guard let id = app.bundleIdentifier, WindowCatalog.terminalIDs.contains(id) else { return nil }
@@ -546,31 +650,31 @@ enum JuliaKeychain {
             }
             let bundle = JuliaWorkspace.preferredTerminal(entries, running: running)
             guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle)
-                ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else { return }
+                ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else { return "No terminal app is installed on this Mac." }
             let config = NSWorkspace.OpenConfiguration()
             config.createsNewApplicationInstance = false
             NSWorkspace.shared.open([dir], withApplicationAt: app, configuration: config) { [weak self] _, error in
                 if let error { Task { @MainActor in self?.notice?("Couldn’t open a terminal there: " + error.localizedDescription) } }
             }
-            return
+            return nil
         }
         // velocity://focus?sig=term:~/projects/x — the terminal in that folder (an answer's conversation).
         if url.host == "focus", JuliaWorkspace.query(in: url, "handle") == nil, let sig = JuliaWorkspace.query(in: url, "sig") {
             // The same lookup the handle path uses: exact folder, then folder NAME, then a
             // parent/child. (This branch kept its own exact-only match after that helper
             // was written, so what2do's "convex-app" tab was never found — silently.)
-            guard let entry = Self.terminal(inFolder: sig, in: entries) else { notice?("That conversation's terminal is no longer open."); return }
+            guard let entry = Self.terminal(inFolder: sig, in: entries) else { return "That conversation's terminal is no longer open." }
             raise(entry)
-            return
+            return nil
         }
         // velocity://focus?project=X&window=<key> — one of them.
         if url.host == "focus", let key = JuliaWorkspace.query(in: url, "window") {
-            guard let entry = entries.first(where: { $0.id == key }) else { notice?("That window is no longer open."); return }
+            guard let entry = entries.first(where: { $0.id == key }) else { return "That window is no longer open." }
             raise(entry)
-            return
+            return nil
         }
-        guard let handle = Self.handle(in: url) else { return }
-        guard let destination = JuliaJumpHandle.decode(handle) else { notice?("That jump link isn’t one Velocity made."); return }
+        guard let handle = Self.handle(in: url) else { return "Velocity doesn’t know what to do with \(url.host ?? "that")." }
+        guard let destination = JuliaJumpHandle.decode(handle) else { return "That jump link isn’t one Velocity made." }
         // THE TAB, NOT ITS TITLE. A handle remembers the title it was minted under, and
         // that is right for "Action Required" (the title sits still while it waits). But
         // an agent's title changes every few seconds — a handle minted while it WORKED
@@ -579,9 +683,10 @@ enum JuliaKeychain {
         // conversation's folder. Never a different process, never by title across windows.
         guard let entry = Self.resolve(destination, in: entries)
                 ?? JuliaWorkspace.query(in: url, "sig").flatMap({ Self.terminal(inFolder: $0, in: entries) }) else {
-            notice?("That terminal closed since Julia was told about it."); return
+            return "That terminal closed since Julia was told about it."
         }
         // Straight to the terminal — the palette never shows (see raise).
         raise(entry)
+        return nil
     }
 }
