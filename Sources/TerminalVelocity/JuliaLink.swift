@@ -457,11 +457,20 @@ enum JuliaKeychain {
         let entries = allEntries?() ?? []
         // velocity://foreground?project=X — everything for that project, at once.
         if url.host == "foreground", let project = JuliaWorkspace.query(in: url, "project") {
-            guard let group = JuliaWorkspace.group(for: project, names: projectNames[project], in: entries) else {
+            // Julia's attribution first (his placements, Jev's judgments — windows whose
+            // titles say nothing about the project), then whatever the names match.
+            let wanted = Set((JuliaWorkspace.query(in: url, "windows") ?? "").split(separator: ",").map(String.init))
+            let placed = entries.filter { wanted.contains($0.id) }
+            let named = JuliaWorkspace.group(for: project, names: projectNames[project], in: entries)
+            var members = placed
+            for e in named?.entries ?? [] where !members.contains(where: { $0.id == e.id }) { members.append(e) }
+            let missing = wanted.count - placed.count
+            JuliaLog.note("foreground \(project): \(wanted.count) keys from Julia (\(placed.count) open, \(missing) not found), \(named?.entries.count ?? 0) by name → \(members.count) windows")
+            guard let lead = members.first(where: \.terminal) ?? members.first else {
                 notice?("Nothing is open for \(project) right now."); return
             }
             Task { @MainActor [weak self] in
-                if await self?.foreground?(group.entries, group.lead) != true { _ = await WindowCatalog.focus(group.lead) }
+                if await self?.foreground?(members, lead) != true { _ = await WindowCatalog.focus(lead) }
             }
             return
         }
