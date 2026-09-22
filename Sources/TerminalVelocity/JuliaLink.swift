@@ -431,10 +431,15 @@ enum JuliaKeychain {
         // velocity://media?pause=1 | resume=1 — quiet the room while he talks.
         if url.host == "media" {
             let pausing = JuliaWorkspace.query(in: url, "pause") != nil
-            let problem = pausing ? JuliaHands.pauseVideos() : JuliaHands.resumeVideos()
-            // The precise per-tab path needs Chrome's setting; the play/pause key needs nothing.
+            // The ⏯ key first — instant, needs no setting — then the precise per-tab /
+            // per-player path OFF the main thread (scripting 60 tabs takes seconds).
             if pausing { JuliaHands.pauseByKey(ifAnyPlaying: entries) } else { JuliaHands.resumeByKey() }
-            if let problem, problem.contains("turned off") { notice?("For per-tab pausing, turn on Chrome ▸ View ▸ Developer ▸ Allow JavaScript from Apple Events.") }
+            Task.detached(priority: .userInitiated) { [weak self] in
+                let problem = pausing ? JuliaHands.pauseVideos() : JuliaHands.resumeVideos()
+                if let problem, problem.contains("turned off") {
+                    await MainActor.run { self?.notice?("For per-tab pausing, turn on Chrome ▸ View ▸ Developer ▸ Allow JavaScript from Apple Events.") }
+                }
+            }
             return
         }
         // velocity://type?sig=…&handle=…&text=…&enter=1 — his words, into THAT conversation.

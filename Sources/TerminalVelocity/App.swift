@@ -843,6 +843,12 @@ final class SearchPanel: NSPanel {
             } else { print("no exchange found in that transcript") }
             return
         }
+        // Debugging media: what does Velocity see as Now Playing, and does its ⏯ press take?
+        if CommandLine.arguments.contains("--media-probe") {
+            print("somethingIsPlaying (CoreAudio):", JuliaHands.somethingIsPlaying())
+            print("nowPlayingRate (MediaRemote, Apple-signed only):", JuliaHands.nowPlayingRate().map { "\($0)" } ?? "nil")
+            return
+        }
         // Debugging Open: which terminal would Velocity raise for a conversation's folder?
         if let i = CommandLine.arguments.firstIndex(of: "--find-terminal"), CommandLine.arguments.indices.contains(i + 1) {
             let entries = WindowCatalog.scan(frontmost: nil).entries
