@@ -117,6 +117,30 @@ enum JuliaWorkspace {
     /// Per project, what belongs to it by name — plus a "*" bucket of the
     /// terminals, tabs, chats and documents that matched NO project, so Julia
     /// (Jev) can place what a name-match cannot. Plain windows stay local.
+    /// WORKING IS LATCHED. An agent's title alternates between the spinner (◐◑) and
+    /// the idle mark (✳) every few seconds as it moves between thinking and tool calls;
+    /// reported raw, every flip became a manifest change, an agent_started/stopped
+    /// event, a pulse starting and stopping on the chip. A terminal stays "working"
+    /// until its title has shown idle for `hold` seconds straight. (Needs-input is
+    /// never latched: that is a real, sudden change.)
+    struct WorkingLatch {
+        private var lastWorking: [String: Date] = [:]
+        let hold: TimeInterval
+        init(hold: TimeInterval = 8) { self.hold = hold }
+        mutating func apply(_ windows: [JuliaWindow], now: Date = Date()) -> [JuliaWindow] {
+            var out = windows
+            for i in out.indices {
+                let key = out[i].sig ?? out[i].key
+                if out[i].state == "working" { lastWorking[key] = now }
+                else if out[i].state != "needs_input", let seen = lastWorking[key], now.timeIntervalSince(seen) < hold { out[i].state = "working" }
+                else { lastWorking[key] = nil }
+            }
+            let live = Set(out.map { $0.sig ?? $0.key })
+            lastWorking = lastWorking.filter { live.contains($0.key) || now.timeIntervalSince($0.value) < hold }
+            return out
+        }
+    }
+
     static func manifest(projects: [String], entries: [WindowEntry]) -> [String: [JuliaWindow]] {
         manifest(names: Dictionary(uniqueKeysWithValues: projects.map { ($0, [$0]) }), order: projects, entries: entries)
     }

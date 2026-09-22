@@ -147,6 +147,17 @@ final class JuliaWorkspaceTests: XCTestCase {
         let parent = entry("55:window:9:tab:8", app: "Terminal", title: "~/Projects/what2do — zsh", terminal: true)
         XCTAssertEqual(JuliaLink.terminal(inFolder: "term:~/projects/what2do/convex-app", in: [other, parent])?.id, parent.id, "else a terminal in the parent folder")
     }
+    func testWorkingIsLatchedThroughTheSpinnerFlicker() {
+        var latch = JuliaWorkspace.WorkingLatch(hold: 8)
+        let t0 = Date(timeIntervalSince1970: 1000)
+        let w = { (state: String?) in [JuliaWindow(key: "k", kind: "terminal", app: "Terminal", title: "x", state: state, task: nil, sig: "term:~/p")] }
+        XCTAssertEqual(latch.apply(w("working"), now: t0).first?.state, "working")
+        XCTAssertEqual(latch.apply(w("idle"), now: t0.addingTimeInterval(3)).first?.state, "working", "a 3 s blink to idle is not a stop")
+        XCTAssertEqual(latch.apply(w("working"), now: t0.addingTimeInterval(5)).first?.state, "working")
+        XCTAssertEqual(latch.apply(w("idle"), now: t0.addingTimeInterval(14)).first?.state, "idle", "9 s of idle: it really stopped")
+        XCTAssertEqual(latch.apply(w("needs_input"), now: t0.addingTimeInterval(15)).first?.state, "needs_input", "needing him is never latched away")
+        XCTAssertEqual(latch.apply(w(nil), now: t0.addingTimeInterval(16)).first?.state, nil)
+    }
     func testOnlyChangesReachTheBoardAndAnEmptiedProjectIsForgotten() {
         let a = [JuliaWindow(key: "t1", kind: "terminal", app: "Terminal", title: "x")]
         let previous = ["convexos": a, "ds4": a]
