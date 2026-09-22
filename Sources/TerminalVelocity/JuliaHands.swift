@@ -35,7 +35,11 @@ enum JuliaHands {
             try? await Task.sleep(for: .milliseconds(12))
         }
         if enter {
-            try? await Task.sleep(for: .milliseconds(80))
+            // A CLEAR GAP BEFORE RETURN. Claude Code (and other TUIs) take a fast burst of
+            // characters as a paste, and a Return inside the burst becomes a newline in
+            // the paste, not a submit — his words sat in the prompt unsent. 80 ms was
+            // inside the burst; a third of a second is a separate keypress.
+            try? await Task.sleep(for: .milliseconds(350))
             CGEvent(keyboardEventSource: src, virtualKey: 36, keyDown: true)?.post(tap: .cghidEventTap)
             CGEvent(keyboardEventSource: src, virtualKey: 36, keyDown: false)?.post(tap: .cghidEventTap)
         }
