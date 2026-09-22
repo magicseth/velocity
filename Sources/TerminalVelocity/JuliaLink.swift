@@ -339,12 +339,41 @@ enum JuliaKeychain {
     /// nothing with Chrome in front; "clicking open in what2do doesn't bring it to the
     /// forefront"). Velocity is a menu-bar app with nothing to show, so activating it for
     /// a beat is invisible; then it yields to the target and steps back.
+    /// The colour of the glow around what comes forward — the state's colour, as on the
+    /// strip (blue = an answer, orange = it needs him), else a plain white ring.
+    var glowTint: NSColor = .white
+    static func tint(named name: String?) -> NSColor {
+        switch name { case "blue": return .systemBlue; case "orange": return .systemOrange; default: return .white }
+    }
+
     private func raise(_ entry: WindowEntry) {
         Task { @MainActor [weak self] in
             guard let app = NSRunningApplication(processIdentifier: entry.pid), !app.isTerminated else { return }
+            let tint = self?.glowTint ?? .white
             if NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid {
                 if await !WindowCatalog.focus(entry) { self?.openEntry?(entry) }
+                if let el = entry.element, let wid = WindowRaise.windowID(of: el) { WindowRaise.glow(windowID: wid, tint: tint) }
                 return
+            }
+            // ONE WINDOW, NOT THE APP: the window server puts exactly this window in front
+            // ("i don't like that open foregrounds the entire terminal app"). Verified by the
+            // frontmost app; the Launch Services path below is the fallback.
+            JuliaLog.note("raise: element=\(entry.element != nil) wid=\(entry.element.flatMap(WindowRaise.windowID(of:)).map(String.init) ?? "nil") skylight=\(WindowRaise.available)")
+            if let el = entry.element, let wid = WindowRaise.windowID(of: el) {
+                if entry.minimized { AXUIElementSetAttributeValue(el, kAXMinimizedAttribute as CFString, kCFBooleanFalse) }
+                if WindowRaise.front(pid: entry.pid, windowID: wid, element: el) {
+                    for _ in 0..<12 {
+                        if NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid { break }
+                        try? await Task.sleep(for: .milliseconds(25))
+                    }
+                    if NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid {
+                        if entry.tab != nil || entry.browserTab != nil { _ = await WindowCatalog.focus(entry) }
+                        WindowRaise.glow(windowID: wid, tint: tint)
+                        JuliaLog.note("raised one window: \(app.localizedName ?? "") “\(entry.title.prefix(40))”")
+                        return
+                    }
+                    JuliaLog.note("single-window raise not honoured; falling back to app activation")
+                }
             }
             // A background app's own activation requests are ignored on macOS 14 — measured:
             // NSApp.activate() never took, app.activate() reported success while the target
@@ -557,6 +586,9 @@ enum JuliaKeychain {
     /// dispatched, else why it could not be (the caller notices or settles with it).
     @discardableResult
     func perform(_ url: URL) -> String? {
+        // The glow's colour rides on every act: blue = an answer, orange = it needs him.
+        glowTint = Self.tint(named: JuliaWorkspace.query(in: url, "glow"))
+        WindowRaise.currentTint = glowTint
         guard url.scheme == "velocity" else { return "Not a velocity:// URL." }
         let entries = allEntries?() ?? []
         // velocity://foreground?project=X — everything for that project, at once.
@@ -603,8 +635,10 @@ enum JuliaKeychain {
                 JuliaLog.note("type → tty \(tty) “\(target.entry.title.prefix(60))”")
                 Task { @MainActor [weak self] in
                     let ok = await JuliaHands.type(text, enter: enter, into: target.entry) { [weak self] in
-                        guard target.select() else { return false }
-                        await self?.activate(pid: target.entry.pid)
+                        guard let wid = target.select() else { return false }
+                        // The one Terminal window, in front — not every Terminal window.
+                        if !WindowRaise.front(pid: target.entry.pid, windowID: wid) { await self?.activate(pid: target.entry.pid) }
+                        else { WindowRaise.glow(windowID: wid, tint: self?.glowTint ?? .white) }
                         // THE TAB, in front, verified — up to a second for a Space to switch.
                         for _ in 0..<10 {
                             if ConversationTTY.isFront(tty: tty) { return true }
@@ -681,6 +715,18 @@ enum JuliaKeychain {
         // matched nothing by the time he clicked Open, and nothing happened. So: the
         // exact match first; then the same tab by identity; then any terminal in the
         // conversation's folder. Never a different process, never by title across windows.
+        // THE TAB ITSELF when the handle knows its tty: Terminal selects it (any Space), the
+        // window server puts that one window in front, a ring shows where.
+        if let tty = destination.tty, let target = ConversationTTY.target(onTTY: tty) {
+            Task { @MainActor [weak self] in
+                guard let wid = target.select() else { return }
+                if WindowRaise.front(pid: target.entry.pid, windowID: wid) {
+                    WindowRaise.glow(windowID: wid, tint: self?.glowTint ?? .white)
+                    JuliaLog.note("opened tty \(tty) — one window")
+                } else { await self?.activate(pid: target.entry.pid) }
+            }
+            return nil
+        }
         guard let entry = Self.resolve(destination, in: entries)
                 ?? JuliaWorkspace.query(in: url, "sig").flatMap({ Self.terminal(inFolder: $0, in: entries) }) else {
             return "That terminal closed since Julia was told about it."

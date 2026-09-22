@@ -133,12 +133,14 @@ enum ConversationTTY {
         return NSAppleScript(source: source)?.executeAndReturnError(&err).stringValue == "/dev/" + tty
     }
 
-    static func target(onTTY tty: String) -> (entry: WindowEntry, select: () -> Bool)? {
+    /// `select` selects the tab and orders its window front inside Terminal, returning the
+    /// window's id (the window server's), or nil when the tab moved.
+    static func target(onTTY tty: String) -> (entry: WindowEntry, select: () -> CGWindowID?)? {
         guard let tab = terminalTabs().first(where: { $0.tty == tty }),
               let app = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Terminal").first(where: { !$0.isTerminated }) else { return nil }
         let entry = WindowEntry(id: "tty:" + tty, pid: app.processIdentifier, appName: app.localizedName ?? "Terminal", title: tab.windowName,
                                 icon: nil, element: nil, minimized: false, hidden: app.isHidden, terminal: true)
-        let select = {
+        let select: () -> CGWindowID? = {
             let source = """
             tell application "Terminal"
                 set w to window \(tab.windowIndex)
@@ -150,13 +152,15 @@ enum ConversationTTY {
                 try
                     set frontmost of w to true
                 end try
-                return "ok"
+                return "ok:" & (id of w)
             end tell
             """
             var err: NSDictionary?
-            let r = NSAppleScript(source: source)?.executeAndReturnError(&err).stringValue
-            if r != "ok" { JuliaLog.note("select tab on \(tty): \(r ?? (err?[NSAppleScript.errorMessage] as? String) ?? "?")") }
-            return r == "ok"
+            let r = NSAppleScript(source: source)?.executeAndReturnError(&err).stringValue ?? ""
+            guard r.hasPrefix("ok:"), let wid = UInt32(r.dropFirst(3)) else {
+                JuliaLog.note("select tab on \(tty): \(r.isEmpty ? ((err?[NSAppleScript.errorMessage] as? String) ?? "?") : r)"); return nil
+            }
+            return CGWindowID(wid)
         }
         return (entry, select)
     }
