@@ -428,6 +428,31 @@ enum JuliaKeychain {
             }
             return
         }
+        // velocity://media?pause=1 | resume=1 — quiet the room while he talks.
+        if url.host == "media" {
+            let pausing = JuliaWorkspace.query(in: url, "pause") != nil
+            let problem = pausing ? JuliaHands.pauseVideos() : JuliaHands.resumeVideos()
+            // The precise per-tab path needs Chrome's setting; the play/pause key needs nothing.
+            if pausing { JuliaHands.pauseByKey(ifAnyPlaying: entries) } else { JuliaHands.resumeByKey() }
+            if let problem, problem.contains("turned off") { notice?("For per-tab pausing, turn on Chrome ▸ View ▸ Developer ▸ Allow JavaScript from Apple Events.") }
+            return
+        }
+        // velocity://type?sig=…&handle=…&text=…&enter=1 — his words, into THAT conversation.
+        if url.host == "type", let text = JuliaWorkspace.query(in: url, "text") {
+            let enter = JuliaWorkspace.query(in: url, "enter") == "1"
+            var entry: WindowEntry?
+            if let handle = JuliaWorkspace.query(in: url, "handle"), let d = JuliaJumpHandle.decode(handle) { entry = d.liveEntry() ?? Self.sameTab(d, in: entries) }
+            if entry == nil, let sig = JuliaWorkspace.query(in: url, "sig") { entry = Self.terminal(inFolder: sig, in: entries) }
+            guard let target = entry else { notice?("That conversation's terminal is no longer open — nothing was typed."); return }
+            Task { @MainActor [weak self] in
+                let ok = await JuliaHands.type(text, enter: enter, into: target) { [weak self] in
+                    self?.raise(target)
+                    try? await Task.sleep(for: .milliseconds(500))
+                }
+                if !ok { self?.notice?("Couldn’t type into that terminal (it didn’t come to the front).") }
+            }
+            return
+        }
         // velocity://terminal?path=/abs/dir — a new terminal in that project.
         if url.host == "terminal" {
             guard let dir = JuliaWorkspace.terminalDirectory(JuliaWorkspace.query(in: url, "path")) else {
