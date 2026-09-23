@@ -60,4 +60,24 @@ final class ClosedTabTests: XCTestCase {
         history.observe([], complete: true, launch: launch, now: Date().addingTimeInterval(8 * 86400))
         XCTAssertTrue(history.records.isEmpty)
     }
+    @MainActor func testDeduplicatesAcrossWindowsAndRestartsButPreservesProfilesAndURLs() {
+        let now = Date()
+        func record(_ window: Int, profile: String = "Work", url: String = "https://example.com/review/1", age: Double = 0) -> ClosedTab {
+            ClosedTab(title: "Review Helper", url: url, profile: profile, windowID: window, pid: 123,
+                      launch: now.addingTimeInterval(Double(window)), closed: now.addingTimeInterval(-age))
+        }
+        let latest = record(2)
+        let records = ClosedTabs.deduplicated([record(1, age: 2), latest, record(3, profile: "Personal"), record(4, url: "https://example.com/review/2")])
+        XCTAssertEqual(records.count, 3)
+        XCTAssertTrue(records.contains { $0.id == latest.id })
+    }
+    @MainActor func testOpenDestinationSuppressesClosedResultOnlyInNormalSearch() {
+        let history = ClosedTabs(file: nil), launch = Date(), tab = entry()
+        history.observe([tab], complete: true, launch: launch)
+        history.observe([], complete: true, launch: launch)
+        history.observe([], complete: true, launch: launch)
+        XCTAssertTrue(history.entries(excludingOpen: [tab]).isEmpty)
+        XCTAssertEqual(history.entries(excludingOpen: [tab], showOpenHistory: true).count, 1)
+    }
+
 }

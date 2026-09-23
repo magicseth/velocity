@@ -2,7 +2,7 @@ import AppKit
 import ApplicationServices
 
 extension WindowEntry {
-    var canClose: Bool { closedTab == nil && launchURL == nil && chatProject == nil && conversation == nil }
+    var canClose: Bool { cachedTerminal == nil && closedTab == nil && launchURL == nil && chatProject == nil && conversation == nil }
     var closeLabel: String { isTab ? "Close tab" : element != nil ? "Close window" : "Quit app" }
 }
 
@@ -15,7 +15,7 @@ extension WindowEntry {
             // Only close the exact current control, never substitute a whole-window close.
             guard let live = WindowCatalog.liveTab(for: entry), CFEqual(live, tab) else { return false }
             if pressCloseControl(live) { return true }
-            guard WindowCatalog.focus(entry) else { return false }
+            guard await WindowCatalog.focus(entry) else { return false }
             for _ in 0..<20 {
                 if NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid { break }
                 try? await Task.sleep(for: .milliseconds(50))
@@ -35,7 +35,7 @@ extension WindowEntry {
                   NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid else { return false }
             return AXUIElementPerformAction(closeItem, kAXPressAction as CFString) == .success
         }
-        guard WindowCatalog.focus(entry) else { return false }
+        guard await WindowCatalog.focus(entry) else { return false }
         return pressCloseControl(window)
     }
 

@@ -17,9 +17,9 @@ extension AppDelegate {
             case .open:
                 if let tab = entry.browserTab {
                     guard let app = NSRunningApplication(processIdentifier: entry.pid) else { return false }
+                    guard await BrowserTabs.select(tab, requireUnchanged: true) else { return false }
                     app.unhide()
-                    guard app.activate(options: []) else { return false }
-                    result = BrowserTabs.select(tab, requireUnchanged: true)
+                    result = app.activate(options: [])
                 } else { result = await self.focusGroup([], selected: entry) }
             case .close: result = await CloseResult.close(entry)
             }

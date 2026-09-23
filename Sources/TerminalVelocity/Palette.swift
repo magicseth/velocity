@@ -6,6 +6,19 @@ struct SearchResults {
     var entries: [WindowEntry] = []
     var selectedID: String?
     var selectedEntry: WindowEntry? { entries.first { $0.id == selectedID } }
+    // Native List can retain stale row hosts while a progressive catalog scan
+    // replaces and reorders its data. Rebuild hosts when their content changes;
+    // selection-only changes keep the same list and scroll position.
+    var contentIdentity: Int {
+        var hash = Hasher()
+        for entry in entries {
+            hash.combine(entry.id)
+            hash.combine(entry.title)
+            hash.combine(entry.subtitle)
+            hash.combine(entry.audio.rawValue)
+        }
+        return hash.finalize()
+    }
 }
 
 @MainActor final class PaletteModel: ObservableObject {
@@ -147,6 +160,7 @@ struct SearchResults {
     var chooseEntry: ((WindowEntry) -> Void)?
     var closeEntry: ((WindowEntry) -> Void)?
     @Published var closingEntries: Set<String> = []
+    @Published var scanningApp: String?
     var refresh: (() -> Void)?
     @Published var shortcut = "⌥ Space"
     @Published var shortcutRegistered = false
@@ -159,7 +173,7 @@ struct SearchResults {
     func filter(preserveSelection: Bool = false) {
         let selectedID = preserveSelection ? resultState.selectedID : nil
         let parsed = SearchQuery(query)
-        var nextResults = (all + closedTabs.records.map(\.entry)).enumerated().compactMap { index, entry -> (Int, Double, Int, WindowEntry)? in
+        var nextResults = (all + closedTabs.entries(excludingOpen: all, showOpenHistory: query.lowercased().split(separator: " ").contains("@closed"))).enumerated().compactMap { index, entry -> (Int, Double, Int, WindowEntry)? in
             let key = entry.memoryKey
             let recent = memory.recent[key] ?? 0
             guard parsed.accepts(entry, recent: recent > 0) else { return nil }
@@ -239,7 +253,7 @@ struct PaletteView: View {
             if model.loading || model.searchingLive {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text(model.loading ? "Still searching · refreshing windows and tabs…" : "Still searching · finding AI matches…")
+                    Text(model.loading ? "Still searching · checking \(model.scanningApp ?? "windows and tabs")…" : "Still searching · finding AI matches…")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                     Spacer()
                 }.padding(.horizontal, 24).padding(.vertical, 8)
@@ -314,6 +328,12 @@ struct PaletteView: View {
                                     .id(entry.id)
                             }
                     }
+                    .id(displayed.contentIdentity)
+                    .onAppear {
+                        if let id = displayed.selectedEntry?.id {
+                            DispatchQueue.main.async { proxy.scrollTo(id) }
+                        }
+                    }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
                     .environment(\.defaultMinListRowHeight, 58)
@@ -336,7 +356,7 @@ struct PaletteView: View {
                     Button { model.beginAIGrouping() } label: { Image(systemName: "rectangle.3.group") }.buttonStyle(.plain).help("AI groups")
                     Button { model.liveMatchingEnabled.toggle() } label: {
                         Label(model.liveMatchStatus ?? (model.liveMatchingEnabled ? "AI search on" : "AI search off"), systemImage: "sparkles")
-                    }.buttonStyle(.plain).help("Flash-Lite matches your search against window titles through your AI Gateway. Click to toggle.")
+                    }.buttonStyle(.plain).help("Jev matches your search against app names and window titles through your configured backend. Click to toggle.")
                 }
                 Text(model.message ?? (model.trusted ? "\(model.results.count) results" : "Permission needed"))
                     .lineLimit(1)

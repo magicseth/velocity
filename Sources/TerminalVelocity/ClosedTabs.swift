@@ -56,8 +56,32 @@ struct ClosedTab: Codable, Identifiable {
     init(file: URL? = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Velocity/ClosedTabs/history.json")) {
         self.file = file
         if let file, let data = try? Data(contentsOf: file), let saved = try? JSONDecoder().decode([ClosedTab].self, from: data) {
-            records = saved.filter { Self.validURL($0.url) && Date().timeIntervalSince($0.closed) < 7 * 86400 }.prefix(100).map { $0 }
+            records = Self.deduplicated(saved).filter { Self.validURL($0.url) && Date().timeIntervalSince($0.closed) < 7 * 86400 }.prefix(100).map { $0 }
+            persist()
         }
+    }
+    // A known profile plus exact URL is a destination, regardless of window or browser restart.
+    // Unknown profiles stay window-scoped rather than conflating separate accounts.
+    nonisolated static func destinationKey(url: String, profile: String?, pid: pid_t, windowID: Int, launch: Date) -> String {
+        let scope = profile.flatMap { $0.isEmpty || $0 == "Profile unavailable" ? nil : $0 }
+            ?? "unknown:\(pid):\(windowID):\(launch.timeIntervalSince1970)"
+        return scope + "\n" + url
+    }
+    nonisolated static func deduplicated(_ records: [ClosedTab]) -> [ClosedTab] {
+        var seen = Set<String>()
+        return records.sorted { $0.closed > $1.closed }.filter {
+            seen.insert(destinationKey(url: $0.url, profile: $0.profile, pid: $0.pid, windowID: $0.windowID, launch: $0.launch)).inserted
+        }
+    }
+    func entries(excludingOpen entries: [WindowEntry], showOpenHistory: Bool = false) -> [WindowEntry] {
+        if showOpenHistory { return Self.deduplicated(records).map(\.entry) }
+        return Self.deduplicated(records).filter { closed in
+            !entries.contains { entry in
+                guard let tab = entry.browserTab, tab.browserID == "com.google.Chrome",
+                      let profile = closed.profile, !profile.isEmpty, profile != "Profile unavailable" else { return false }
+                return tab.url == closed.url && entry.browserProfile == profile
+            }
+        }.map(\.entry)
     }
     nonisolated static func validURL(_ value: String) -> Bool {
         guard let url = URLComponents(string: value), ["https", "http"].contains(url.scheme),
@@ -81,7 +105,7 @@ struct ClosedTab: Codable, Identifiable {
         let pending = disappeared.subtracting(missing)
         for id in pending { current[id] = previous[id] }
         previous = current; missing = pending
-        records = Array(records.filter { now.timeIntervalSince($0.closed) < 7 * 86400 }.prefix(100))
+        records = Array(Self.deduplicated(records).filter { now.timeIntervalSince($0.closed) < 7 * 86400 }.prefix(100))
         persist()
     }
     func remove(_ id: UUID) { records.removeAll { $0.id == id }; persist() }

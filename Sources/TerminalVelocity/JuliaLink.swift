@@ -711,20 +711,18 @@ enum JuliaKeychain {
             let harness = JuliaWorkspace.query(in: url, "harness") ?? AttentionPrompt.harness(title: target.entry.title)
             let keys = AttentionPrompt.yesKeys(screen: before, harness: harness)
             JuliaLog.note("approve → tty \(tty) harness=\(harness ?? "?") keys=\(keys.text.isEmpty ? "Return" : keys.text)")
-            let ok = await JuliaHands.type(keys.text, enter: keys.enter, into: target.entry) { [weak self] in
-                guard let wid = target.select() else { return false }
-                if await WindowRaise.bring(pid: target.entry.pid, windowID: wid) { WindowRaise.glow(windowID: wid, tint: self?.glowTint ?? .white) }
-                else { await self?.activate(pid: target.entry.pid); _ = target.select() }
-                for _ in 0..<10 {
-                    if ConversationTTY.isFront(tty: tty) { return true }
-                    try? await Task.sleep(for: .milliseconds(100))
-                }
-                return false
-            }
+            // Bring the exact tab to the front, then send the key the OS way (System Events).
+            guard let wid = target.select() else { return .failed(class: "stale", why: "That tab moved.") }
+            _ = await WindowRaise.bring(pid: target.entry.pid, windowID: wid)
+            WindowRaise.glow(windowID: wid, tint: glowTint)
+            for _ in 0..<10 { if ConversationTTY.isFront(tty: tty) { break }; try? await Task.sleep(for: .milliseconds(100)) }
+            let ok = await JuliaHands.systemKeystroke(keys.text, enter: keys.enter, activating: target.entry.pid)
+            JuliaLog.note("approve keypress: ok=\(ok) isFront=\(ConversationTTY.isFront(tty: tty)) key=\(keys.text.isEmpty ? "Return" : keys.text)")
             guard ok else { return .failed(class: "uncertain", why: "Couldn’t answer that tab (it didn’t come to the front) — nothing was typed.") }
             // The receipt is the CHOICE PROMPT leaving the screen (not the whole question —
             // its scrollback lingers). Up to 4 s: the agent redraws once it acts on the yes.
             let gate = AttentionPrompt.gateLine(asking) ?? (asking.components(separatedBy: "\n").last ?? asking)
+            if let after0 = ConversationTTY.contents(ofTTY: tty) { JuliaLog.note("approve after key: gate=\(gate.suffix(40)) tail=…\(String(after0.suffix(160)).replacingOccurrences(of: "\n", with: "⏎").suffix(120))") }
             for _ in 0..<20 {
                 try? await Task.sleep(for: .milliseconds(200))
                 guard let now = ConversationTTY.contents(ofTTY: tty) else { continue }
@@ -735,12 +733,9 @@ enum JuliaKeychain {
             }
             // Still showing after 4 s: the key did not take. Try ONCE more, then report honestly.
             JuliaLog.note("approve: \(tty) still asking after 4 s — retrying the key once")
-            _ = await JuliaHands.type(keys.text, enter: keys.enter, into: target.entry) { [weak self] in
-                guard let wid = target.select() else { return false }
-                _ = await WindowRaise.bring(pid: target.entry.pid, windowID: wid)
-                for _ in 0..<10 { if ConversationTTY.isFront(tty: tty) { return true }; try? await Task.sleep(for: .milliseconds(100)) }
-                return false
-            }
+            if let wid2 = target.select() { _ = await WindowRaise.bring(pid: target.entry.pid, windowID: wid2) }
+            for _ in 0..<10 { if ConversationTTY.isFront(tty: tty) { break }; try? await Task.sleep(for: .milliseconds(100)) }
+            _ = await JuliaHands.systemKeystroke(keys.text, enter: keys.enter, activating: target.entry.pid)
             for _ in 0..<10 {
                 try? await Task.sleep(for: .milliseconds(200))
                 if let now = ConversationTTY.contents(ofTTY: tty), !String(now.suffix(500)).contains(gate) {

@@ -135,8 +135,13 @@ final class AttentionPromptTests: XCTestCase {
         // Keys come from the DIALOG: both harnesses' "confirm" dialogs take Return.
         XCTAssertEqual(AttentionPrompt.yesKeys(screen: "Do you want to proceed?\n❯ 1. Yes\n  2. No", harness: "claude").enter, true)
         XCTAssertEqual(AttentionPrompt.yesKeys(screen: "Do you want to proceed?\n❯ 1. Yes", harness: "claude").text, "")
-        XCTAssertEqual(AttentionPrompt.yesKeys(screen: "1. Yes, proceed (y)\nPress enter to confirm or esc to cancel", harness: "codex").enter, true)
+        // Codex's "(y)" hotkey — type the letter, no Return (synthetic Return does not clear its dialog).
+        let cx = AttentionPrompt.yesKeys(screen: "1. Yes, proceed (y)\n2. No\nPress enter to confirm or esc to cancel", harness: "codex")
+        XCTAssertEqual(cx.text, "y"); XCTAssertEqual(cx.enter, false)
         XCTAssertEqual(AttentionPrompt.yesKeys(screen: "Overwrite file? (y/n)", harness: nil).text, "y")
+        // Claude Code's list has no letter hotkey → Return.
+        let cc = AttentionPrompt.yesKeys(screen: "Do you want to proceed?\n❯ 1. Yes\n  2. No", harness: "claude")
+        XCTAssertEqual(cc.text, ""); XCTAssertEqual(cc.enter, true)
         XCTAssertEqual(AttentionPrompt.gateLine("Bash command\nnpx foo\nDo you want to proceed?\n❯ 1. Yes"), "❯ 1. Yes")
     }
     func testAnEmptyOrDecorativeScreenIsNoQuestion() {

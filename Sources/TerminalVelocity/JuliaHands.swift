@@ -13,6 +13,27 @@ import Foundation
 //   velocity://media?pause=1 | resume=1              pause playing web videos; resume the
 //                                                    ones it paused
 enum JuliaHands {
+    /// SEND A KEY THE WAY THE OS DOES IT. Measured: a synthetic CGEvent posted to
+    /// .cghidEventTap reaches a frontmost Terminal window by z-order but a window raised
+    /// through the window server is not always the KEY window, so the event is delivered
+    /// nowhere — both a Return and a printable "y" left Codex's dialog untouched. System
+    /// Events routes the keystroke through the active app's responder chain (it targets
+    /// whatever is frontmost), which is how a real keypress arrives. Returns true when
+    /// AppleScript reported no error. `key` is a single character; `enter` sends Return.
+    @MainActor static func systemKeystroke(_ key: String, enter: Bool, activating pid: pid_t) async -> Bool {
+        // Make the target the ACTIVE app first — System Events sends to the active app.
+        NSRunningApplication(processIdentifier: pid)?.activate(options: [.activateIgnoringOtherApps])
+        try? await Task.sleep(for: .milliseconds(150))
+        var lines = ["tell application \"System Events\""]
+        if !key.isEmpty { lines.append("keystroke \"\(key.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\"") }
+        if enter { if !key.isEmpty { lines.append("delay 0.35") }; lines.append("key code 36") }
+        lines.append("end tell")
+        var err: NSDictionary?
+        _ = NSAppleScript(source: lines.joined(separator: "\n"))?.executeAndReturnError(&err)
+        if let msg = err?[NSAppleScript.errorMessage] as? String { JuliaLog.note("systemKeystroke error: \(msg)"); return false }
+        return true
+    }
+
     /// Keystrokes go ONLY to the terminal Velocity itself brought forward, and only
     /// once it is frontmost: never into whatever happens to have focus.
     /// `raised` brings the exact terminal forward and returns whether it IS in front; false

@@ -3,7 +3,17 @@ import Foundation
 extension WindowEntry {
     var displayTitle: String {
         #if VELOCITY_EXPERIMENTAL
-        return agentSynopsis ?? title
+        guard let synopsis = agentSynopsis else { return title }
+        // Keep the identifying folder/prefix that search matches, even when
+        // the agent's status and process suffix are simplified for display.
+        if let marker = title.range(of: #"\[\s*[!.]\s*\]\s+Action Required\s*\|?\s*|[✳◐◑]\s+"#, options: .regularExpression) {
+            let prefix = String(title[..<marker.lowerBound])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: #"\s+[—–-]$"#, with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !prefix.isEmpty { return prefix + " — " + synopsis }
+        }
+        return synopsis
         #else
         return title
         #endif

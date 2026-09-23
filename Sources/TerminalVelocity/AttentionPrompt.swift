@@ -44,9 +44,18 @@ enum AttentionPrompt {
     /// highlighted default and a "(y)" hotkey takes "y".
     static func yesKeys(screen: String, harness: String?) -> (text: String, enter: Bool) {
         let s = screen.lowercased()
-        if s.contains("press enter to confirm") || s.contains("enter to confirm") || s.range(of: #"[❯›▶]\s*1\.\s*yes"#, options: .regularExpression) != nil { return ("", true) }
-        if s.range(of: #"\(y\)|\[y/n\]|\by/n\b|yes/no"#, options: .regularExpression) != nil && s.range(of: #"[❯›▶]\s*1\."#, options: .regularExpression) == nil { return ("y", true) }
-        return ("", true)   // default: the highlighted Yes + Return
+        // A LETTER HOTKEY BEATS RETURN. Measured: a synthetic Return (virtualKey 36) reaches
+        // a frontmost Terminal tab but Codex's modal dialog does not act on it, while a
+        // printable character (the unicode-string path) does. When the yes option names a
+        // one-letter hotkey — Codex's "1. Yes, proceed (y)", a shell "(y)" / "[Y/n]" — type
+        // that letter alone. Only a highlighted list with no letter (Claude Code's "❯ 1.
+        // Yes") takes Return.
+        if let m = s.range(of: #"yes[^\n(]*\(([a-z])\)"#, options: .regularExpression) {
+            let letter = String(s[m]).replacingOccurrences(of: #".*\(([a-z])\).*"#, with: "$1", options: .regularExpression)
+            if letter.count == 1 { return (letter, false) }
+        }
+        if s.range(of: #"\[y/n\]|\by/n\b|yes/no|\(y\)"#, options: .regularExpression) != nil { return ("y", false) }
+        return ("", true)   // Claude Code's highlighted Yes + Return (no letter hotkey)
     }
     /// The line whose disappearance proves the dialog was answered — the choice prompt itself.
     static func gateLine(_ question: String) -> String? {
