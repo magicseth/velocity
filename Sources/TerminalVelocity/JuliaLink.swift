@@ -910,6 +910,19 @@ enum JuliaKeychain {
     /// The receipt for words that went in: `keys-posted` (what was posted, where) upgraded
     /// to `prompt-echoed` when Terminal's selected tab shows the tail of them — one
     /// AppleScript, given 200 ms; no answer in time leaves the method at what was seen.
+    static func typedReceipt(text: String, enter: Bool, into where_: String) async -> ActReceipt {
+        let posted = "\(text.count) chars\(enter ? " + Enter" : "") into \(where_)"
+        let tail = String(text.suffix(40))
+        let echoed = await withTaskGroup(of: Bool.self) { group -> Bool in
+            group.addTask { await Task.detached(priority: .userInitiated) { ConversationTTY.promptEchoes(tail: tail) }.value }
+            group.addTask { try? await Task.sleep(for: .milliseconds(200)); return false }
+            let first = await group.next() ?? false
+            group.cancelAll()
+            return first
+        }
+        return echoed ? .verified(method: "prompt-echoed", observed: "the terminal shows the words — " + posted) : .verified(method: "keys-posted", observed: posted)
+    }
+
     /// The topmost PLACEABLE window (terminal/browser/chat/document — one with an identity of
     /// its own) under a screen point. Julia's own strip and windows have no such sig, so they
     /// are skipped; the desktop and menu bar are excluded by the list flags.
@@ -932,16 +945,4 @@ enum JuliaKeychain {
         return nil
     }
 
-    static func typedReceipt(text: String, enter: Bool, into where_: String) async -> ActReceipt {
-        let posted = "\(text.count) chars\(enter ? " + Enter" : "") into \(where_)"
-        let tail = String(text.suffix(40))
-        let echoed = await withTaskGroup(of: Bool.self) { group -> Bool in
-            group.addTask { await Task.detached(priority: .userInitiated) { ConversationTTY.promptEchoes(tail: tail) }.value }
-            group.addTask { try? await Task.sleep(for: .milliseconds(200)); return false }
-            let first = await group.next() ?? false
-            group.cancelAll()
-            return first
-        }
-        return echoed ? .verified(method: "prompt-echoed", observed: "the terminal shows the words — " + posted) : .verified(method: "keys-posted", observed: posted)
-    }
 }

@@ -97,7 +97,13 @@ enum JuliaHands {
     }
     static func pauseByKey(ifAnyPlaying entries: [WindowEntry]) {
         DispatchQueue.global(qos: .userInitiated).async {
-            guard somethingIsPlaying() || entries.contains(where: { $0.audio == .playing || $0.audio == .appOutput }) else { return }
+            // ⏯ IS A BLIND TOGGLE, so it may ONLY be pressed when the system says something is
+            // genuinely PLAYING (rate 1). The old audio-output check read Chrome as playing even
+            // when a YouTube tab was PAUSED (Chrome keeps its audio stream open), so ⏯ toggled
+            // the paused video to PLAYING — "when i hit voice it plays youtube if it was paused
+            // already". A paused source has rate 0 or nil (Chrome is nil either way), and its
+            // precise pause runs through the JS/AppleScript path in runMedia regardless.
+            guard nowPlayingRate() == 1.0 else { return }
             playPauseKey(); pressedPlayPause = true
         }
     }
