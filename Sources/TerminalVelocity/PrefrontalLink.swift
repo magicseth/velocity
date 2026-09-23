@@ -73,6 +73,9 @@ struct PrefrontalCommand: Decodable, Equatable {
         var glow: String?
         /// For `approve`: which harness's dialog is asking (the report read it).
         var harness: String?
+        /// For `label`: the screen point to hit-test to a window.
+        var x: Double?
+        var y: Double?
     }
     let id: String
     let machineId: String
@@ -106,6 +109,9 @@ struct PrefrontalCommand: Decodable, Equatable {
             host = "foreground"
             guard args.project != nil else { return nil }
             items = [q("project", args.project), q("windows", args.windowKeys?.joined(separator: ","))]
+        case "label":
+            host = "label"
+            items = [q("project", args.project), q("x", args.x.map { String($0) }), q("y", args.y.map { String($0) })]
         case "approve":
             // A "Yes" to the question on that tab's screen — Velocity picks the harness's keys.
             host = "approve"
