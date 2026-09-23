@@ -748,13 +748,19 @@ enum JuliaKeychain {
             guard ok else { return .failed(class: "uncertain", why: "Couldn’t answer that tab (it didn’t come to the front) — nothing was typed.") }
             // The receipt is the CHOICE PROMPT leaving the screen (not the whole question —
             // its scrollback lingers). Up to 4 s: the agent redraws once it acts on the yes.
-            let gate = AttentionPrompt.gateLine(asking) ?? (asking.components(separatedBy: "\n").last ?? asking)
-            if let after0 = ConversationTTY.contents(ofTTY: tty) { JuliaLog.note("approve after key: gate=\(gate.suffix(40)) tail=…\(String(after0.suffix(160)).replacingOccurrences(of: "\n", with: "⏎").suffix(120))") }
+            // STILL ASKING? The dialog is gone only when NONE of its markers remain in the tail —
+            // not merely when one line scrolled off. A stray character (a mis-sent "y") shifts a
+            // line and would fool a single-line check into a false "cleared" while the dialog is
+            // still up (measured: the receipt said cleared but he still had to hit Enter).
+            func stillAsking(_ screen: String) -> Bool {
+                let t = String(screen.suffix(600)).lowercased()
+                return t.contains("press enter to confirm") || t.contains("enter to confirm") || t.contains("do you want to proceed") || t.range(of: #"[❯›▶]\s*1\.\s*yes"#, options: .regularExpression) != nil
+            }
+            if let after0 = ConversationTTY.contents(ofTTY: tty) { JuliaLog.note("approve after \(keys.text.isEmpty ? "Return" : keys.text): stillAsking=\(stillAsking(after0)) tail=…\(String(after0.suffix(120)).replacingOccurrences(of: "\n", with: "⏎").suffix(90))") }
             for _ in 0..<20 {
                 try? await Task.sleep(for: .milliseconds(200))
                 guard let now = ConversationTTY.contents(ofTTY: tty) else { continue }
-                let tail = String(now.suffix(500))
-                if !tail.contains(gate) {
+                if !stillAsking(now) {
                     return .verified(method: "prompt-cleared", observed: "the question left \(tty)’s screen after \(keys.text.isEmpty ? "Return" : "“\(keys.text)”")")
                 }
             }
@@ -765,7 +771,7 @@ enum JuliaKeychain {
             _ = await JuliaHands.systemKeystroke(keys.text, enter: keys.enter, activating: target.entry.pid)
             for _ in 0..<10 {
                 try? await Task.sleep(for: .milliseconds(200))
-                if let now = ConversationTTY.contents(ofTTY: tty), !String(now.suffix(500)).contains(gate) {
+                if let now = ConversationTTY.contents(ofTTY: tty), !stillAsking(now) {
                     return .verified(method: "prompt-cleared", observed: "the question left \(tty)’s screen (second try)")
                 }
             }

@@ -44,18 +44,18 @@ enum AttentionPrompt {
     /// highlighted default and a "(y)" hotkey takes "y".
     static func yesKeys(screen: String, harness: String?) -> (text: String, enter: Bool) {
         let s = screen.lowercased()
-        // A LETTER HOTKEY BEATS RETURN. Measured: a synthetic Return (virtualKey 36) reaches
-        // a frontmost Terminal tab but Codex's modal dialog does not act on it, while a
-        // printable character (the unicode-string path) does. When the yes option names a
-        // one-letter hotkey — Codex's "1. Yes, proceed (y)", a shell "(y)" / "[Y/n]" — type
-        // that letter alone. Only a highlighted list with no letter (Claude Code's "❯ 1.
-        // Yes") takes Return.
-        if let m = s.range(of: #"yes[^\n(]*\(([a-z])\)"#, options: .regularExpression) {
-            let letter = String(s[m]).replacingOccurrences(of: #".*\(([a-z])\).*"#, with: "$1", options: .regularExpression)
-            if letter.count == 1 { return (letter, false) }
-        }
+        // RETURN CONFIRMS THE HIGHLIGHTED YES. Both Claude Code ("❯ 1. Yes") and Codex ("› 1.
+        // Yes, proceed (y)" + "Press enter to confirm") select their Yes with Return — that is
+        // what he does by hand. A letter like "y" typed a literal character that shifted the
+        // screen without approving (the receipt then wrongly read as cleared, and he still had
+        // to hit Enter). Return via System Events (not the synthetic CGEvent that never landed)
+        // is the reliable confirm. Only a bare y/n prompt with NO "enter to confirm" and NO
+        // highlighted option takes the letter.
+        let hasEnterConfirm = s.contains("press enter") || s.contains("enter to confirm")
+        let hasHighlight = s.range(of: #"[❯›▶]\s*\d"#, options: .regularExpression) != nil
+        if hasEnterConfirm || hasHighlight { return ("", true) }
         if s.range(of: #"\[y/n\]|\by/n\b|yes/no|\(y\)"#, options: .regularExpression) != nil { return ("y", false) }
-        return ("", true)   // Claude Code's highlighted Yes + Return (no letter hotkey)
+        return ("", true)
     }
     /// The line whose disappearance proves the dialog was answered — the choice prompt itself.
     static func gateLine(_ question: String) -> String? {
