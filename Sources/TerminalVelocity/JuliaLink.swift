@@ -782,12 +782,14 @@ enum JuliaKeychain {
             guard let hit = Self.placeableWindow(atScreenPoint: NSPoint(x: x, y: y), in: entries), let sig = hit.sig else {
                 return .failed(class: "stale", why: "No window there to label — drop the project onto an app window.")
             }
+            // GLOW FIRST — the flash is a local effect and must be instant; the placement
+            // write follows (a network hop should not delay the confirmation he sees).
+            WindowRaise.glow(windowID: hit.windowID, tint: .systemBlue)
             guard let client = try? JuliaClient() else { return .failed(class: "unavailable", why: "Connect Velocity to Julia first.") }
             let pid = project.isEmpty ? nil : (project as Any)
             do { _ = try await client.call(path: "attention:placeWindow", ["token": JuliaKeychain.token(), "sig": sig, "projectId": pid as Any]) }
             catch { return .failed(class: "uncertain", why: "Couldn’t label it: \(error.localizedDescription.prefix(120))") }
             JuliaLog.note("labeled \(sig) → project \(project)")
-            WindowRaise.glow(windowID: hit.windowID, tint: .systemBlue)
             return .verified(method: "self", observed: "labeled “\(hit.title.prefix(40))” for the project")
         }
         if url.host == "type", let text = JuliaWorkspace.query(in: url, "text") {
