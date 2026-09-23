@@ -8,7 +8,7 @@ struct WindowEntry: Identifiable, @unchecked Sendable {
     let appName: String
     var title: String
     let icon: NSImage?
-    let element: AXUIElement?
+    var element: AXUIElement?
     let minimized: Bool
     let hidden: Bool
     let terminal: Bool
@@ -26,9 +26,10 @@ struct WindowEntry: Identifiable, @unchecked Sendable {
     var representedWindowTitle: String? = nil
     var browserPinned = false
     var closedTab: ClosedTab? = nil
+    var cachedTerminal: CachedTerminal? = nil
     var documentFolder: String {
         guard let documentPath else { return "" }
-        return (documentPath as NSString).deletingLastPathComponent
+        return terminal ? documentPath : (documentPath as NSString).deletingLastPathComponent
     }
     var searchText: String {
         [title, representedWindowTitle, browserTab?.url ?? closedTab?.url, documentPath, browserProfile, chatProject?.mode].compactMap { $0 }.joined(separator: " ")
@@ -47,7 +48,7 @@ struct WindowEntry: Identifiable, @unchecked Sendable {
         }
         return title
     }
-    var attention: AgentAttention { AgentAttention.detect(title: title, terminal: terminal) }
+    var attention: AgentAttention { AgentAttention.detect(title: title, terminal: terminal && cachedTerminal == nil) }
     var windowKey: String? {
         chatProject == nil && conversation == nil ? element.map { "\(pid):\(CFHash($0))" } : nil
     }
@@ -63,8 +64,9 @@ struct WindowEntry: Identifiable, @unchecked Sendable {
         // Remember only user-selected identifiers, not a browsing log.
         return SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
     }
-    var isTab: Bool { tab != nil || browserTab != nil || closedTab != nil }
+    var isTab: Bool { tab != nil || browserTab != nil || closedTab != nil || cachedTerminal?.tabTitle != nil }
     var subtitle: String {
+        if cachedTerminal != nil { return appName + " · Cached session · checking availability…" }
         if let closedTab {
             let age = RelativeDateTimeFormatter().localizedString(for: closedTab.closed, relativeTo: Date())
             return [appName, "Recently closed " + age, browserProfile, URL(string: closedTab.url)?.host].compactMap { $0 }.joined(separator: " · ")

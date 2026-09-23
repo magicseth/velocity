@@ -572,6 +572,24 @@ final class SearchPanel: NSPanel {
         refresh()
     }
 
+    /// The fast path's tab list, with everything only the scan knows poured in by tab id:
+    /// the AX element and tab, audio, the profile and its icon, pinned. A tab the scan did
+    /// not see keeps what it had; a tab only the scan saw is gone (the list is newer).
+    static func enrich(_ latest: [WindowEntry], from scanned: [WindowEntry]) -> [WindowEntry] {
+        let byID = Dictionary(scanned.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return latest.map { entry in
+            guard let s = byID[entry.id] else { return entry }
+            var e = entry
+            if e.element == nil { e.element = s.element }
+            if e.tab == nil { e.tab = s.tab }
+            if e.audio == .none { e.audio = s.audio }
+            if e.browserProfile == nil || e.browserProfile == "Profile unavailable" { e.browserProfile = s.browserProfile ?? e.browserProfile }
+            if e.browserProfileIcon == nil { e.browserProfileIcon = s.browserProfileIcon }
+            if !e.browserPinned { e.browserPinned = s.browserPinned }
+            return e
+        }
+    }
+
     func refreshChromeMetadata() {
         guard model.browserTabsEnabled, !scanningChromeMetadata,
               let app = NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.Chrome").first else { return }
@@ -657,8 +675,22 @@ final class SearchPanel: NSPanel {
                 DispatchQueue.main.async {
                     guard let self else { return }
                     self.model.scanningApp = name
+                    // THE FAST PATH LANDED MID-SCAN: its tab list is newer, but the scan's
+                    // enrichment (the AX element, audio, profile) is the only source of those —
+                    // every palette opening starts both, and the fast fetch always finished
+                    // first, so the enrichment was discarded every time ("no profile, and no
+                    // audio playing chip"). Keep the newer list; pour the enrichment into it.
                     if self.chromeMetadataRevision != chromeRevision,
-                       self.model.all.contains(where: { $0.pid == appPID && $0.browserTab?.browserID == "com.google.Chrome" }) { return }
+                       self.model.all.contains(where: { $0.pid == appPID && $0.browserTab?.browserID == "com.google.Chrome" }) {
+                        guard let entries else { return }
+                        let latest = self.model.all.filter { $0.pid == appPID }
+                        let merged = Self.enrich(latest, from: entries)
+                        self.snapshotGeneration += 1
+                        self.model.all.removeAll { $0.pid == appPID }
+                        self.model.all.append(contentsOf: merged)
+                        self.model.filter(preserveSelection: true)
+                        return
+                    }
                     if let entries {
                         self.snapshotGeneration += 1
                         let prior = Dictionary(self.model.all.filter { $0.pid == appPID }.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -683,9 +715,11 @@ final class SearchPanel: NSPanel {
                 snapshot.entries += self.model.all.filter { $0.terminal && $0.launchURL == nil }
                 if self.chromeMetadataRevision != chromeRevision,
                    let chrome = NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.Chrome").first {
+                    // Same rule at completion: the newer list, carrying the scan's enrichment.
                     let latest = self.model.all.filter { $0.pid == chrome.processIdentifier }
+                    let scanned = snapshot.entries.filter { $0.pid == chrome.processIdentifier }
                     snapshot.entries.removeAll { $0.pid == chrome.processIdentifier }
-                    snapshot.entries += latest
+                    snapshot.entries += Self.enrich(latest, from: scanned)
                 }
                 self.snapshotGeneration += 1
                 if self.chromeMetadataRevision == chromeRevision {

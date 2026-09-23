@@ -90,3 +90,18 @@ final class AnswerWatcherTests: XCTestCase {
         XCTAssertNil(AnswerWatcher.parse(try write("exec")), "a program ran that one; he did not ask")
     }
 }
+
+@MainActor final class ChromeEnrichTests: XCTestCase {
+    func testTheFastListKeepsItsTabsAndTakesTheScansEnrichment() {
+        let fast = [WindowEntry(id: "1:browser:2:3", pid: 1, appName: "Google Chrome", title: "Video", icon: nil, element: nil, minimized: false, hidden: false, terminal: false, browser: true),
+                    WindowEntry(id: "1:browser:2:4", pid: 1, appName: "Google Chrome", title: "New", icon: nil, element: nil, minimized: false, hidden: false, terminal: false, browser: true)]
+        var scanned = WindowEntry(id: "1:browser:2:3", pid: 1, appName: "Google Chrome", title: "Video", icon: nil, element: nil, minimized: false, hidden: false, terminal: false, browser: true)
+        scanned.audio = .playing; scanned.browserProfile = "Seth"
+        let stale = WindowEntry(id: "1:browser:2:9", pid: 1, appName: "Google Chrome", title: "Closed", icon: nil, element: nil, minimized: false, hidden: false, terminal: false, browser: true)
+        let merged = AppDelegate.enrich(fast, from: [scanned, stale])
+        XCTAssertEqual(merged.map(\.id), ["1:browser:2:3", "1:browser:2:4"], "the newer list's tabs, and only those")
+        XCTAssertEqual(merged[0].audio, .playing, "the scan's audio badge lands on the fast entry")
+        XCTAssertEqual(merged[0].browserProfile, "Seth")
+        XCTAssertEqual(merged[1].audio, .none)
+    }
+}
