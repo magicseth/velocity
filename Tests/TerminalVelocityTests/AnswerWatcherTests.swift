@@ -139,3 +139,12 @@ final class AttentionPromptTests: XCTestCase {
         XCTAssertNil(AttentionPrompt.extract("────────\n\n────────"))
     }
 }
+
+final class SteadyTitleTests: XCTestCase {
+    func testAWindowNameAndAnAXTitleMeetInTheMiddle() {
+        let ax = "~/Projects/domaincomponent — [ ! ] Action Required | Review — codex ◂ node"
+        let name = "domaincomponent — [ . ] Action Required | Review — codex ◂ node"
+        XCTAssertEqual(ConversationTTY.steady(ax), ConversationTTY.steady(name))
+        XCTAssertEqual(ConversationTTY.steady("convexos — ◐ task — node ◂ claude"), "convexos — task — node ◂ claude")
+    }
+}

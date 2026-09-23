@@ -54,7 +54,7 @@ enum ConversationTTY {
 
     // MARK: Terminal.app tabs by tty
 
-    struct Tab { let windowName: String; let windowIndex: Int; let tabIndex: Int; let tty: String; let selected: Bool }
+    struct Tab { let windowName: String; let windowIndex: Int; let tabIndex: Int; let tty: String; let selected: Bool; var windowID: CGWindowID = 0 }
 
     /// Every Terminal.app tab with its tty. One Apple Events round trip; nil when Terminal
     /// is not running or he has not allowed Velocity to control it.
@@ -69,6 +69,7 @@ enum ConversationTTY {
             set ttys to tty of every tab of every window
             set sels to selected of every tab of every window
             set names to name of every window
+            set ids to id of every window
             set out to ""
             repeat with wi from 1 to count of ttys
                 set wt to item wi of ttys
@@ -76,7 +77,7 @@ enum ConversationTTY {
                 repeat with ti from 1 to count of wt
                     set sel to "0"
                     if item ti of ws then set sel to "1"
-                    set out to out & wi & "\t" & ti & "\t" & (item ti of wt) & "\t" & sel & "\t" & (item wi of names) & linefeed
+                    set out to out & wi & "\t" & ti & "\t" & (item ti of wt) & "\t" & sel & "\t" & (item wi of ids) & "\t" & (item wi of names) & linefeed
                 end repeat
             end repeat
             return out
@@ -87,25 +88,45 @@ enum ConversationTTY {
             JuliaLog.note("terminalTabs: AppleScript failed: \((err?[NSAppleScript.errorMessage] as? String) ?? "?")"); return []
         }
         return out.split(separator: "\n").compactMap { line in
-            let f = line.split(separator: "\t", maxSplits: 4, omittingEmptySubsequences: false).map(String.init)
-            guard f.count == 5, let wi = Int(f[0]), let ti = Int(f[1]) else { return nil }
-            return Tab(windowName: f[4], windowIndex: wi, tabIndex: ti, tty: (f[2] as NSString).lastPathComponent, selected: f[3] == "1")
+            let f = line.split(separator: "\t", maxSplits: 5, omittingEmptySubsequences: false).map(String.init)
+            guard f.count == 6, let wi = Int(f[0]), let ti = Int(f[1]) else { return nil }
+            // Terminal's window `id` IS the window server's id — the one key both sides share.
+            return Tab(windowName: f[5], windowIndex: wi, tabIndex: ti, tty: (f[2] as NSString).lastPathComponent, selected: f[3] == "1", windowID: CGWindowID(f[4]) ?? 0)
         }
+    }
+
+    /// A title with its blinking parts removed — "[ ! ] Action Required" alternates with
+    /// "[ . ]", and a working agent's ◐◑ spins — so a name read a moment apart still matches.
+    /// The accessibility title also leads with the folder's PATH ("~/Projects/x — …") where
+    /// Terminal's window name leads with its NAME ("x — …"): the first segment is reduced to
+    /// its last path component on both sides.
+    static func steady(_ title: String) -> String {
+        var parts = title.components(separatedBy: " — ")
+        if let first = parts.first, first.contains("/") { parts[0] = (first as NSString).lastPathComponent }
+        return parts.joined(separator: " — ")
+            .replacingOccurrences(of: #"\[\s*[!.]\s*\]\s*"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"[✳◐◑]\s*"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
     }
 
     /// The tty a catalog entry (a Terminal tab) sits on — the inverse of `entry(onTTY:)`:
     /// its window is the group whose selected tab's title is the window's name, its
     /// position in that group is the script's tab index.
     static func tty(of entry: WindowEntry, in entries: [WindowEntry], tabs: [Tab]? = nil) -> String? {
-        guard entry.isTab, let key = entry.windowKey else { return nil }
+        guard entry.isTab, let element = entry.element, let wid = WindowRaise.windowID(of: element) else { return nil }
         let all = tabs ?? terminalTabs()
-        let same: (String, String) -> Bool = { a, b in a == b || a.hasPrefix(b) || b.hasPrefix(a) }
-        let group = entries.filter { $0.pid == entry.pid && $0.isTab && $0.windowKey == key }
-        guard let index = group.firstIndex(where: { $0.id == entry.id }) else { return nil }
-        for (_, wtabs) in Dictionary(grouping: all, by: \.windowIndex) {
-            guard let name = wtabs.first?.windowName, group.contains(where: { same($0.title, name) }) else { continue }
-            if let tab = wtabs.first(where: { $0.tabIndex == index + 1 }) { return tab.tty }
-        }
+        // THE WINDOW BY ITS SERVER ID, not by the catalog's key (two windows once hashed alike)
+        // and not by name (which blinks). Its tabs, in the tab bar's order, are the catalog
+        // entries whose window element is this window; the entry's position is the tab.
+        let wtabs = all.filter { $0.windowID == wid }
+        guard !wtabs.isEmpty else { return nil }
+        // One tab in the window: that is it (the catalog lists a one-tab window twice — as
+        // the window and as its tab — so a position would be off by one).
+        if wtabs.count == 1 { return wtabs[0].tty }
+        let siblings = entries.filter { $0.pid == entry.pid && $0.isTab && $0.element.map { WindowRaise.windowID(of: $0) == wid } == true }
+        guard let index = siblings.firstIndex(where: { $0.id == entry.id }) else { return nil }
+        if let tab = wtabs.first(where: { $0.tabIndex == index + 1 }) { return tab.tty }
+        JuliaLog.note("tty(of:) unresolved: window \(wid) has \(wtabs.count) tabs, catalog has \(siblings.count), index \(index)")
         return nil
     }
 
@@ -133,7 +154,7 @@ enum ConversationTTY {
         let all = terminalTabs()
         guard let tab = all.first(where: { $0.tty == tty }) else { JuliaLog.note("tty \(tty): not among \(all.count) Terminal tabs"); return nil }
         let terminalPids = Set(NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Terminal").map(\.processIdentifier))
-        let same: (String, String) -> Bool = { a, b in a == b || a.hasPrefix(b) || b.hasPrefix(a) }
+        let same: (String, String) -> Bool = { a, b in let x = steady(a), y = steady(b); return x == y || x.hasPrefix(y) || y.hasPrefix(x) }
         // The catalog lists a tabbed window as its TABS (each with the window's key). The
         // window's name is its selected tab's title, so the group holding a tab with that
         // title is the window; the tab at the script's position is the one.
