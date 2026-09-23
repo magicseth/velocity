@@ -776,8 +776,9 @@ enum JuliaKeychain {
         // under the point) to the project. The point is NSEvent.mouseLocation (bottom-left,
         // points); CGWindowList is top-left, so flip against the primary display height.
         if url.host == "label", let project = JuliaWorkspace.query(in: url, "project"),
-           let xs = JuliaWorkspace.query(in: url, "x"), let ys = JuliaWorkspace.query(in: url, "y"),
-           let x = Double(xs), let y = Double(ys) {
+           let pt = JuliaWorkspace.query(in: url, "point"),
+           case let parts = pt.split(separator: ","), parts.count == 2,
+           let x = Double(parts[0]), let y = Double(parts[1]) {
             guard let hit = Self.placeableWindow(atScreenPoint: NSPoint(x: x, y: y), in: entries), let sig = hit.sig else {
                 return .failed(class: "stale", why: "No window there to label — drop the project onto an app window.")
             }
