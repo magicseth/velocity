@@ -73,9 +73,9 @@ struct PrefrontalCommand: Decodable, Equatable {
         var glow: String?
         /// For `approve`: which harness's dialog is asking (the report read it).
         var harness: String?
-        /// For `label`: the screen point to hit-test to a window.
-        var x: Double?
-        var y: Double?
+        /// For `label`: the screen point (integer pixels) to hit-test to a window.
+        var x: Int?
+        var y: Int?
     }
     let id: String
     let machineId: String
