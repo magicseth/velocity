@@ -27,6 +27,9 @@ struct WindowEntry: Identifiable, @unchecked Sendable {
     var browserPinned = false
     var closedTab: ClosedTab? = nil
     var cachedTerminal: CachedTerminal? = nil
+    /// A PROJECT ROW (option-space searches projects too, once signed in); its windowKeys
+    /// name the open windows to bring forward when chosen.
+    var project: JuliaProjectRow? = nil
     var documentFolder: String {
         guard let documentPath else { return "" }
         return terminal ? documentPath : (documentPath as NSString).deletingLastPathComponent
@@ -66,6 +69,15 @@ struct WindowEntry: Identifiable, @unchecked Sendable {
     }
     var isTab: Bool { tab != nil || browserTab != nil || closedTab != nil || cachedTerminal?.tabTitle != nil }
     var subtitle: String {
+        if let project {
+            var parts = ["Project"]
+            let n = project.windowKeys.count
+            if n > 0 { parts.append("\(n) window\(n == 1 ? "" : "s")") }
+            if project.needs > 0 { parts.append("needs you") }
+            else if project.working > 0 { parts.append("agent working") }
+            if let repo = project.repoPath { parts.append((repo as NSString).abbreviatingWithTildeInPath) }
+            return parts.joined(separator: " · ")
+        }
         if cachedTerminal != nil { return appName + " · Cached session · checking availability…" }
         if let closedTab {
             let age = RelativeDateTimeFormatter().localizedString(for: closedTab.closed, relativeTo: Date())

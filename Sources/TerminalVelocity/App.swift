@@ -104,6 +104,7 @@ final class SearchPanel: NSPanel {
         menuBarFallback = MenuBarFallback(status: status)
         menuBarFallback?.menu = { [weak self] in self?.statusMenu() ?? NSMenu() }
         julia.openEntry = { [weak self] entry in self?.choose(entry) }
+        julia.onProjects = { [weak self] rows in self?.model.juliaProjects = rows }
         julia.notice = { [weak self] text in self?.model.message = text }
         julia.allEntries = { [weak self] in self?.model.all ?? [] }
         julia.foreground = { [weak self] entries, lead in await self?.focusGroup(entries, selected: lead) ?? false }
@@ -792,6 +793,17 @@ final class SearchPanel: NSPanel {
     }
 
     func choose(_ entry: WindowEntry) {
+        if let pr = entry.project {
+            panel.orderOut(nil)
+            let members = model.all.filter { pr.windowKeys.contains($0.id) }
+            guard let lead = members.first(where: \.terminal) ?? members.first else {
+                // Nothing open: offer its folder (a new terminal) if it has one.
+                model.message = pr.repoPath != nil ? "No windows open for \(pr.title) — open its folder from Julia." : "No windows open for \(pr.title)."
+                refresh(); return
+            }
+            Task { _ = await focusGroup(members, selected: lead) }
+            return
+        }
         if let cached = entry.cachedTerminal {
             guard let live = cached.resolve() else {
                 model.all.removeAll { $0.id == entry.id }

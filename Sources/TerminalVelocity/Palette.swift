@@ -57,6 +57,8 @@ struct SearchResults {
         objectiveSelection = (objectiveSelection + delta + count) % count
     }
     var liveMatchingActive = false
+    /// Projects Julia knows (empty until signed in) — option-space searches them too.
+    var juliaProjects: [JuliaProjectRow] = [] { didSet { if juliaProjects != oldValue { filter(preserveSelection: true) } } }
     let liveMatcher = LiveWindowMatcher()
     @Published var liveMatchStatus: String?
     var searchingLive: Bool { liveMatchStatus == "Waiting to search…" || liveMatchStatus == "AI matching…" }
@@ -199,6 +201,19 @@ struct SearchResults {
             return $0.2 < $1.2
         }.map { $0.3 }
         nextResults = ResultDeduplication.apply(nextResults)
+        // PROJECTS (option-space searches them too, once signed in): the ones whose name or an
+        // alias matches, best first, ahead of the windows — Enter brings the project forward.
+        if !parsed.text.isEmpty, !juliaProjects.isEmpty {
+            let projectRows: [WindowEntry] = juliaProjects.compactMap { (pr: JuliaProjectRow) -> (Int, WindowEntry)? in
+                guard let best = pr.matchNames.compactMap({ WindowSearch.score(query: parsed.text, title: $0, app: "Project") }).max() else { return nil }
+                var e = WindowEntry(id: "project:" + pr.id, pid: 0, appName: "Project", title: pr.title,
+                    icon: NSImage(systemSymbolName: "square.stack.3d.up.fill", accessibilityDescription: "Project"),
+                    element: nil, minimized: false, hidden: false, terminal: false)
+                e.project = pr
+                return (best, e)
+            }.sorted { ($0 as (Int, WindowEntry)).0 > ($1 as (Int, WindowEntry)).0 }.map { $0.1 }
+            nextResults = projectRows + nextResults
+        }
         // Publish rows and selection together. A vanished selection must not silently
         // become a different app occupying the same row after a background scan.
         resultState = SearchResults(entries: nextResults, selectedID: selectedID ?? nextResults.first?.id)

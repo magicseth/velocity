@@ -9,6 +9,17 @@ import Foundation
 // velocity://focus?handle=… and raises the exact window. Nothing below reads
 // terminal text: project + task come from the title, as the notification does.
 
+/// A project as the palette shows it: searchable names + the open windows to bring forward.
+struct JuliaProjectRow: Identifiable, Equatable {
+    let id: String
+    let title: String
+    let matchNames: [String]
+    let windowKeys: [String]
+    let needs: Int
+    let working: Int
+    let repoPath: String?
+}
+
 struct JuliaReport: Equatable, Codable {
     let externalId: String
     let project: String
@@ -174,6 +185,8 @@ enum JuliaKeychain {
     var foreground: (([WindowEntry], WindowEntry) async -> Bool)?
     /// Everything on the Mac right now (for jump-by-project and foreground).
     var allEntries: (() -> [WindowEntry])?
+    /// A project as the palette needs it: its identity, the names it can be searched by, the
+    /// keys of its open windows (to bring forward), and whether it needs him / has agents at work.
     private var projectTitles: [String] = []
     /// Every name each chip's windows might use (title, former names, folder, children's).
     private var projectNames: [String: [String]] = [:]
@@ -539,8 +552,22 @@ enum JuliaKeychain {
             var names: [String: [String]] = [:]
             for p in projects { if let t = p["title"] as? String { names[t] = (p["matchNames"] as? [String]) ?? [t] } }
             projectNames = names
+            // Full rows for the palette (attention:byProject already gives us everything).
+            let rows: [JuliaProjectRow] = projects.compactMap { p in
+                guard let id = p["projectId"] as? String, let title = p["title"] as? String else { return nil }
+                let windows = (p["windows"] as? [[String: Any]]) ?? []
+                return JuliaProjectRow(id: id, title: title,
+                    matchNames: (p["matchNames"] as? [String]) ?? [title],
+                    windowKeys: windows.compactMap { $0["key"] as? String },
+                    needs: (p["needs"] as? [[String: Any]])?.count ?? 0,
+                    working: (p["working"] as? Double).map(Int.init) ?? 0,
+                    repoPath: p["repoPath"] as? String)
+            }
+            self.onProjects?(rows)
         }
     }
+    /// The palette subscribes to this — the projects Julia knows (empty until paired).
+    var onProjects: (([JuliaProjectRow]) -> Void)?
 
     private func sync() {
         guard !syncing, pendingReports != nil || pendingWorkspace != nil else { return }
