@@ -157,13 +157,17 @@ enum JuliaWorkspace {
         init(hold: TimeInterval = 8) { self.hold = hold }
         mutating func apply(_ windows: [JuliaWindow], now: Date = Date()) -> [JuliaWindow] {
             var out = windows
+            // BY WINDOW, NEVER BY FOLDER. Keyed by the signature, every terminal in a folder
+            // shared one latch: one working Claude tab kept its idle neighbours — a Codex tab,
+            // another claude --resume — "working" too ("it shows green dot for convexos, but
+            // i don't see anything running").
             for i in out.indices {
-                let key = out[i].sig ?? out[i].key
+                let key = out[i].key
                 if out[i].state == "working" { lastWorking[key] = now }
                 else if out[i].state != "needs_input", let seen = lastWorking[key], now.timeIntervalSince(seen) < hold { out[i].state = "working" }
                 else { lastWorking[key] = nil }
             }
-            let live = Set(out.map { $0.sig ?? $0.key })
+            let live = Set(out.map(\.key))
             lastWorking = lastWorking.filter { live.contains($0.key) || now.timeIntervalSince($0.value) < hold }
             return out
         }

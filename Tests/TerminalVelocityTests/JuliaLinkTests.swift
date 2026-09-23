@@ -218,4 +218,13 @@ final class JuliaWorkspaceTests: XCTestCase {
         let back = seen.stamp(["*": [w("a")]], now: t0.addingTimeInterval(12))
         XCTAssertEqual(back["*"]?.first?.since, 1_012_000, "closed and reopened: new again")
     }
+    func testTheWorkingLatchIsPerWindowNotPerFolder() {
+        var latch = JuliaWorkspace.WorkingLatch(hold: 8)
+        let t0 = Date()
+        let busy = JuliaWindow(key: "a", kind: "terminal", app: "Terminal", title: "claude", state: "working", sig: "term:~/projects/x")
+        let idle = JuliaWindow(key: "b", kind: "terminal", app: "Terminal", title: "codex", state: nil, sig: "term:~/projects/x")
+        let out = latch.apply([busy, idle], now: t0)
+        XCTAssertEqual(out[0].state, "working")
+        XCTAssertNil(out[1].state, "a neighbour in the same folder is not painted working")
+    }
 }
