@@ -797,15 +797,21 @@ enum JuliaKeychain {
             // create=1: a project with no folder yet gets one — ONLY under ~/Projects, never a
             // dotfolder, never nested inside another project's home ("i made a new project …
             // but i can't figure out how to add a terminal window to it to start an agent").
+            // create=1: a folder Julia recorded may not exist on THIS Mac yet (a project made
+            // on the phone, or one whose folder was never actually made — "i can't make a new
+            // terminal for touchtalk"). If it is a direct child of ~/Projects and missing, make
+            // it; if it already exists (at any depth), just open there; only refuse to CREATE a
+            // nested/dotfolder that does not exist.
             if JuliaWorkspace.query(in: url, "create") == "1", let raw = JuliaWorkspace.query(in: url, "path") {
                 let projects = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Projects").standardizedFileURL.path
-                let url = URL(fileURLWithPath: raw).standardizedFileURL
-                let parent = url.deletingLastPathComponent().path
-                if parent == projects, !url.lastPathComponent.hasPrefix("."), !FileManager.default.fileExists(atPath: url.path) {
-                    do { try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false); JuliaLog.note("made folder \(url.lastPathComponent) under ~/Projects") }
-                    catch { return .failed(class: "unavailable", why: "Couldn't make ~/Projects/\(url.lastPathComponent): \(error.localizedDescription)") }
-                } else if parent != projects {
-                    return .failed(class: "invalid", why: "A new project folder goes under ~/Projects only.")
+                let dir = URL(fileURLWithPath: raw).standardizedFileURL
+                if !FileManager.default.fileExists(atPath: dir.path) {
+                    let parent = dir.deletingLastPathComponent().path
+                    guard parent == projects, !dir.lastPathComponent.hasPrefix(".") else {
+                        return .failed(class: "invalid", why: "\(dir.lastPathComponent) has no folder here, and a new project folder goes directly under ~/Projects.")
+                    }
+                    do { try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: false); JuliaLog.note("made folder \(dir.lastPathComponent) under ~/Projects") }
+                    catch { return .failed(class: "unavailable", why: "Couldn't make ~/Projects/\(dir.lastPathComponent): \(error.localizedDescription)") }
                 }
             }
             guard let dir = JuliaWorkspace.terminalDirectory(JuliaWorkspace.query(in: url, "path")) else {
