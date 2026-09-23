@@ -38,10 +38,22 @@ enum AttentionPrompt {
         return text.isEmpty ? nil : text
     }
 
-    /// The keys that mean yes. Claude Code's permission dialog is a list with "Yes"
-    /// highlighted — Return takes it; Codex's approval asks y/n — "y" alone.
-    static func yesKeys(harness: String?) -> (text: String, enter: Bool) {
-        harness == "codex" ? ("y", false) : ("", true)
+    /// The keys that mean yes, read from the DIALOG ITSELF — the harness title only breaks a
+    /// tie. Both Claude Code and Codex highlight the Yes option and take Return ("Press enter
+    /// to confirm", "❯ 1. Yes"): Return is the reliable answer. A bare y/n prompt with no
+    /// highlighted default and a "(y)" hotkey takes "y".
+    static func yesKeys(screen: String, harness: String?) -> (text: String, enter: Bool) {
+        let s = screen.lowercased()
+        if s.contains("press enter to confirm") || s.contains("enter to confirm") || s.range(of: #"[❯›▶]\s*1\.\s*yes"#, options: .regularExpression) != nil { return ("", true) }
+        if s.range(of: #"\(y\)|\[y/n\]|\by/n\b|yes/no"#, options: .regularExpression) != nil && s.range(of: #"[❯›▶]\s*1\."#, options: .regularExpression) == nil { return ("y", true) }
+        return ("", true)   // default: the highlighted Yes + Return
+    }
+    /// The line whose disappearance proves the dialog was answered — the choice prompt itself.
+    static func gateLine(_ question: String) -> String? {
+        question.components(separatedBy: "\n").last { l in
+            let t = l.lowercased()
+            return t.contains("proceed") || t.contains("confirm") || t.contains("allow") || t.contains("would you like") || t.range(of: #"[❯›▶]\s*\d\."#, options: .regularExpression) != nil || t.contains("do you want")
+        }
     }
 
     private static func isDecoration(_ t: String) -> Bool {

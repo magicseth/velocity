@@ -71,6 +71,8 @@ struct PrefrontalCommand: Decodable, Equatable {
         var create: Bool?
         /// The ring's colour: the state's (blue = an answer, orange = it needs him).
         var glow: String?
+        /// For `approve`: which harness's dialog is asking (the report read it).
+        var harness: String?
     }
     let id: String
     let machineId: String
@@ -107,7 +109,7 @@ struct PrefrontalCommand: Decodable, Equatable {
         case "approve":
             // A "Yes" to the question on that tab's screen — Velocity picks the harness's keys.
             host = "approve"
-            items = [q("handle", args.handle), q("sig", args.sig)]
+            items = [q("handle", args.handle), q("sig", args.sig), q("harness", args.harness)]
         case "type":
             host = "type"
             guard args.text != nil else { return nil }

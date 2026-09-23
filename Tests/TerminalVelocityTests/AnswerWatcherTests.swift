@@ -132,8 +132,12 @@ final class AttentionPromptTests: XCTestCase {
         XCTAssertEqual(AttentionPrompt.harness(title: "~/Projects/x — [!] Action Required | task — node ◂ claude"), "claude")
         XCTAssertEqual(AttentionPrompt.harness(title: "~/Projects/x — [!] Action Required | task — codex ◂ node"), "codex")
         XCTAssertEqual(AttentionPrompt.harness(title: "domaincomponent — [ . ] Action Required | Review Claude transcript, continue | domaincomponent — codex ◂ node ~/.nvm"), "codex", "the process, not the task's words")
-        XCTAssertEqual(AttentionPrompt.yesKeys(harness: "claude").enter, true)
-        XCTAssertEqual(AttentionPrompt.yesKeys(harness: "codex").text, "y")
+        // Keys come from the DIALOG: both harnesses' "confirm" dialogs take Return.
+        XCTAssertEqual(AttentionPrompt.yesKeys(screen: "Do you want to proceed?\n❯ 1. Yes\n  2. No", harness: "claude").enter, true)
+        XCTAssertEqual(AttentionPrompt.yesKeys(screen: "Do you want to proceed?\n❯ 1. Yes", harness: "claude").text, "")
+        XCTAssertEqual(AttentionPrompt.yesKeys(screen: "1. Yes, proceed (y)\nPress enter to confirm or esc to cancel", harness: "codex").enter, true)
+        XCTAssertEqual(AttentionPrompt.yesKeys(screen: "Overwrite file? (y/n)", harness: nil).text, "y")
+        XCTAssertEqual(AttentionPrompt.gateLine("Bash command\nnpx foo\nDo you want to proceed?\n❯ 1. Yes"), "❯ 1. Yes")
     }
     func testAnEmptyOrDecorativeScreenIsNoQuestion() {
         XCTAssertNil(AttentionPrompt.extract("────────\n\n────────"))

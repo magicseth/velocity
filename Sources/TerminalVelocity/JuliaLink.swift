@@ -706,8 +706,10 @@ enum JuliaKeychain {
             guard let before = ConversationTTY.contents(ofTTY: tty), let asking = AttentionPrompt.extract(before) else {
                 return .failed(class: "stale", why: "Nothing is being asked on that tab any more.")
             }
-            let harness = AttentionPrompt.harness(title: target.entry.title)
-            let keys = AttentionPrompt.yesKeys(harness: harness)
+            // The harness the report already read (from the process chain) beats the window
+            // title here; the KEYS come from the dialog on screen, not a guess.
+            let harness = JuliaWorkspace.query(in: url, "harness") ?? AttentionPrompt.harness(title: target.entry.title)
+            let keys = AttentionPrompt.yesKeys(screen: before, harness: harness)
             JuliaLog.note("approve → tty \(tty) harness=\(harness ?? "?") keys=\(keys.text.isEmpty ? "Return" : keys.text)")
             let ok = await JuliaHands.type(keys.text, enter: keys.enter, into: target.entry) { [weak self] in
                 guard let wid = target.select() else { return false }
@@ -720,15 +722,32 @@ enum JuliaKeychain {
                 return false
             }
             guard ok else { return .failed(class: "uncertain", why: "Couldn’t answer that tab (it didn’t come to the front) — nothing was typed.") }
-            // The receipt is the question leaving the screen, within two seconds.
-            let lastLine = asking.components(separatedBy: "\n").last ?? asking
-            for _ in 0..<10 {
+            // The receipt is the CHOICE PROMPT leaving the screen (not the whole question —
+            // its scrollback lingers). Up to 4 s: the agent redraws once it acts on the yes.
+            let gate = AttentionPrompt.gateLine(asking) ?? (asking.components(separatedBy: "\n").last ?? asking)
+            for _ in 0..<20 {
                 try? await Task.sleep(for: .milliseconds(200))
-                if let now = ConversationTTY.contents(ofTTY: tty), AttentionPrompt.extract(now) != asking, !String(now.suffix(600)).contains(lastLine) {
+                guard let now = ConversationTTY.contents(ofTTY: tty) else { continue }
+                let tail = String(now.suffix(500))
+                if !tail.contains(gate) {
                     return .verified(method: "prompt-cleared", observed: "the question left \(tty)’s screen after \(keys.text.isEmpty ? "Return" : "“\(keys.text)”")")
                 }
             }
-            return .verified(method: "keys-posted", observed: "\(keys.text.isEmpty ? "Return" : "“\(keys.text)”") into \(tty); the question may still be showing")
+            // Still showing after 4 s: the key did not take. Try ONCE more, then report honestly.
+            JuliaLog.note("approve: \(tty) still asking after 4 s — retrying the key once")
+            _ = await JuliaHands.type(keys.text, enter: keys.enter, into: target.entry) { [weak self] in
+                guard let wid = target.select() else { return false }
+                _ = await WindowRaise.bring(pid: target.entry.pid, windowID: wid)
+                for _ in 0..<10 { if ConversationTTY.isFront(tty: tty) { return true }; try? await Task.sleep(for: .milliseconds(100)) }
+                return false
+            }
+            for _ in 0..<10 {
+                try? await Task.sleep(for: .milliseconds(200))
+                if let now = ConversationTTY.contents(ofTTY: tty), !String(now.suffix(500)).contains(gate) {
+                    return .verified(method: "prompt-cleared", observed: "the question left \(tty)’s screen (second try)")
+                }
+            }
+            return .failed(class: "uncertain", why: "Sent yes to \(tty) twice but the question is still on screen — open it and answer there.")
         }
         if url.host == "type", let text = JuliaWorkspace.query(in: url, "text") {
             let enter = JuliaWorkspace.query(in: url, "enter") == "1"
