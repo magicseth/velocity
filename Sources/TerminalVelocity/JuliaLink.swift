@@ -14,6 +14,9 @@ struct JuliaReport: Equatable, Codable {
     let project: String
     let subtask: String
     let jumpHandle: String?
+    /// What the agent is asking, read from the tab's screen (AttentionPrompt), and which harness.
+    var prompt: String? = nil
+    var harness: String? = nil
 }
 
 struct JuliaReportDiff: Equatable {
@@ -54,14 +57,18 @@ struct JuliaReporter: Equatable {
 
     init(latch: TimeInterval = 10) { self.latch = latch }
 
-    @MainActor static func reports(_ entries: [WindowEntry], launch: (pid_t) -> Date?) -> [JuliaReport] {
+    /// `screen`: for a waiting tab, its tty and what is on it (nil in tests and when
+    /// Terminal cannot be asked). The tty rides in the handle; the question rides beside it.
+    @MainActor static func reports(_ entries: [WindowEntry], launch: (pid_t) -> Date?, screen: ((WindowEntry) -> (tty: String?, contents: String?))? = nil) -> [JuliaReport] {
         AttentionNotifications.waiting(entries).map { key, entry in
             let presentation = AttentionPresentation(entry)
+            let seen = screen?(entry)
             let handle = launch(entry.pid)
-                .flatMap { AttentionDestination(entry: entry, launch: $0) }
+                .flatMap { AttentionDestination(entry: entry, launch: $0, tty: seen?.tty) }
                 .flatMap(JuliaJumpHandle.encode)
             return JuliaReport(externalId: JuliaJumpHandle.id(key), project: presentation.project,
-                subtask: presentation.task, jumpHandle: handle)
+                subtask: presentation.task, jumpHandle: handle,
+                prompt: seen?.contents.flatMap { AttentionPrompt.extract($0) }, harness: AttentionPrompt.harness(title: entry.title))
         }.sorted { $0.externalId < $1.externalId }
     }
 
@@ -500,7 +507,15 @@ enum JuliaKeychain {
     func observe(attention entries: [WindowEntry], all: [WindowEntry] = []) {
         guard state == .paired else { return }
         if answers == nil { answers = AnswerWatcher { [weak self] exchange in self?.report(exchange) } }
-        let reports = JuliaReporter.reports(entries) { NSRunningApplication(processIdentifier: $0)?.launchDate }
+        // The screen of every waiting tab: the tabs once, then one event per waiting tab.
+        var tabs: [ConversationTTY.Tab]?
+        let reports = JuliaReporter.reports(entries, launch: { NSRunningApplication(processIdentifier: $0)?.launchDate }) { entry in
+            if tabs == nil { tabs = ConversationTTY.terminalTabs() }
+            let tty = ConversationTTY.tty(of: entry, in: all, tabs: tabs)
+            let contents = tty.flatMap(ConversationTTY.contents(ofTTY:))
+            JuliaLog.note("asking: “\(entry.title.prefix(50))” tty=\(tty ?? "unresolved") screen=\(contents.map { "\($0.count) chars" } ?? "none") tabs=\(tabs?.count ?? 0) isTab=\(entry.isTab) key=\(entry.windowKey ?? "nil")")
+            return (tty, contents)
+        }
         pendingReports = reports
         if !projectTitles.isEmpty {
             let raw = JuliaWorkspace.manifest(names: projectNames, order: projectTitles, entries: all)
@@ -543,6 +558,8 @@ enum JuliaKeychain {
                     var args: [String: Any] = ["token": token, "externalId": report.externalId, "project": report.project,
                         "subtask": report.subtask, "source": "velocity", "machineId": MachineIdentity.machineId]
                     if let handle = report.jumpHandle { args["jumpHandle"] = handle }
+                    if let prompt = report.prompt { args["prompt"] = prompt }
+                    if let harness = report.harness { args["harness"] = harness }
                     _ = try await client.call(.report, args)
                 }
                 for id in diff.resolve { _ = try await client.call(.resolve, ["token": token, "externalId": id]) }
@@ -678,6 +695,41 @@ enum JuliaKeychain {
             return .failed(class: "uncertain", why: "\(after.count) process\(after.count == 1 ? "" : "es") still putting out sound after the pause" + (problem.map { " · " + $0 } ?? ""))
         }
         // velocity://type?sig=…&handle=…&text=…&enter=1 — his words, into THAT conversation.
+        // velocity://approve?handle=… — "Yes" to what that tab is asking. The question must
+        // still be on its screen; the harness's own keys go in only once the tab is the
+        // front window's selected one; verified by the question LEAVING the screen.
+        if url.host == "approve" {
+            guard let tty = JuliaJumpHandle.decode(JuliaWorkspace.query(in: url, "handle") ?? "")?.tty else {
+                return .failed(class: "invalid", why: "That question’s tab isn’t known by its tty — open it and answer there.")
+            }
+            guard let target = ConversationTTY.target(onTTY: tty) else { return .failed(class: "stale", why: "That tab is gone.") }
+            guard let before = ConversationTTY.contents(ofTTY: tty), let asking = AttentionPrompt.extract(before) else {
+                return .failed(class: "stale", why: "Nothing is being asked on that tab any more.")
+            }
+            let harness = AttentionPrompt.harness(title: target.entry.title)
+            let keys = AttentionPrompt.yesKeys(harness: harness)
+            JuliaLog.note("approve → tty \(tty) harness=\(harness ?? "?") keys=\(keys.text.isEmpty ? "Return" : keys.text)")
+            let ok = await JuliaHands.type(keys.text, enter: keys.enter, into: target.entry) { [weak self] in
+                guard let wid = target.select() else { return false }
+                if await WindowRaise.bring(pid: target.entry.pid, windowID: wid) { WindowRaise.glow(windowID: wid, tint: self?.glowTint ?? .white) }
+                else { await self?.activate(pid: target.entry.pid); _ = target.select() }
+                for _ in 0..<10 {
+                    if ConversationTTY.isFront(tty: tty) { return true }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                return false
+            }
+            guard ok else { return .failed(class: "uncertain", why: "Couldn’t answer that tab (it didn’t come to the front) — nothing was typed.") }
+            // The receipt is the question leaving the screen, within two seconds.
+            let lastLine = asking.components(separatedBy: "\n").last ?? asking
+            for _ in 0..<10 {
+                try? await Task.sleep(for: .milliseconds(200))
+                if let now = ConversationTTY.contents(ofTTY: tty), AttentionPrompt.extract(now) != asking, !String(now.suffix(600)).contains(lastLine) {
+                    return .verified(method: "prompt-cleared", observed: "the question left \(tty)’s screen after \(keys.text.isEmpty ? "Return" : "“\(keys.text)”")")
+                }
+            }
+            return .verified(method: "keys-posted", observed: "\(keys.text.isEmpty ? "Return" : "“\(keys.text)”") into \(tty); the question may still be showing")
+        }
         if url.host == "type", let text = JuliaWorkspace.query(in: url, "text") {
             let enter = JuliaWorkspace.query(in: url, "enter") == "1"
             var entry: WindowEntry?

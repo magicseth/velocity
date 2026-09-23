@@ -105,3 +105,37 @@ final class AnswerWatcherTests: XCTestCase {
         XCTAssertEqual(merged[1].audio, .none)
     }
 }
+
+final class AttentionPromptTests: XCTestCase {
+    func testAClaudePermissionDialogIsTheQuestionAndItsChoices() {
+        let screen = """
+        ● Now I'll set the token on the deployment.
+
+        ╭──────────────────────────────────────────────╮
+        │ Bash command                                  │
+        │                                               │
+        │   npx convex env set CLOUDFLARE_API_TOKEN sk-live-abcdefghijklmnop1234 │
+        │   Store the token                             │
+        │                                               │
+        │ Do you want to proceed?                       │
+        │ ❯ 1. Yes                                      │
+        │   2. Yes, and don't ask again for npx convex  │
+        │   3. No, and tell Claude what to do differently │
+        ╰──────────────────────────────────────────────╯
+          ⏵⏵ auto mode on (shift+tab to cycle)
+        """
+        let p = AttentionPrompt.extract(screen)!
+        XCTAssertTrue(p.contains("Do you want to proceed?"))
+        XCTAssertTrue(p.contains("1. Yes"))
+        XCTAssertFalse(p.contains("sk-live"), "a secret-shaped line never leaves")
+        XCTAssertFalse(p.contains("shift+tab"), "terminal chrome is not the question")
+        XCTAssertEqual(AttentionPrompt.harness(title: "~/Projects/x — [!] Action Required | task — node ◂ claude"), "claude")
+        XCTAssertEqual(AttentionPrompt.harness(title: "~/Projects/x — [!] Action Required | task — codex ◂ node"), "codex")
+        XCTAssertEqual(AttentionPrompt.harness(title: "domaincomponent — [ . ] Action Required | Review Claude transcript, continue | domaincomponent — codex ◂ node ~/.nvm"), "codex", "the process, not the task's words")
+        XCTAssertEqual(AttentionPrompt.yesKeys(harness: "claude").enter, true)
+        XCTAssertEqual(AttentionPrompt.yesKeys(harness: "codex").text, "y")
+    }
+    func testAnEmptyOrDecorativeScreenIsNoQuestion() {
+        XCTAssertNil(AttentionPrompt.extract("────────\n\n────────"))
+    }
+}

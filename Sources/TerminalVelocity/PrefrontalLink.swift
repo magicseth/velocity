@@ -33,7 +33,7 @@ enum PrefrontalFunction {
 /// The outcome of one act, as the contract's Receipt carries it: HOW it was seen done
 /// (`VerificationMethod` + what was observed) or WHY it was not (`ErrorClass` + why).
 enum ActReceipt: Equatable {
-    /// z-order · app-activated · tty-front · keys-posted · prompt-echoed · audio-silent · tty-appeared · self
+    /// z-order · app-activated · tty-front · keys-posted · prompt-echoed · prompt-cleared · audio-silent · tty-appeared · self
     case verified(method: String, observed: String)
     /// invalid · unavailable · unsupported · stale · conflict · timeout · uncertain
     case failed(class: String, why: String)
@@ -104,6 +104,10 @@ struct PrefrontalCommand: Decodable, Equatable {
             host = "foreground"
             guard args.project != nil else { return nil }
             items = [q("project", args.project), q("windows", args.windowKeys?.joined(separator: ","))]
+        case "approve":
+            // A "Yes" to the question on that tab's screen — Velocity picks the harness's keys.
+            host = "approve"
+            items = [q("handle", args.handle), q("sig", args.sig)]
         case "type":
             host = "type"
             guard args.text != nil else { return nil }

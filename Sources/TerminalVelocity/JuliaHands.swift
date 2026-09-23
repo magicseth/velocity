@@ -18,7 +18,8 @@ enum JuliaHands {
     /// `raised` brings the exact terminal forward and returns whether it IS in front; false
     /// means nothing is typed — the words never go to whichever window happened to be key.
     @MainActor static func type(_ text: String, enter: Bool, into entry: WindowEntry, after raised: @escaping () async -> Bool) async -> Bool {
-        guard entry.terminal, !text.isEmpty, text.count <= 4000 else { return false }
+        // Return alone is a keypress too (a "Yes" to Claude Code's permission list).
+        guard entry.terminal, !text.isEmpty || enter, text.count <= 4000 else { return false }
         guard await raised() else { return false }
         for _ in 0..<40 {
             if NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid { break }

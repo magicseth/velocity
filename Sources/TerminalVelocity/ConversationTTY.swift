@@ -93,6 +93,40 @@ enum ConversationTTY {
         }
     }
 
+    /// The tty a catalog entry (a Terminal tab) sits on — the inverse of `entry(onTTY:)`:
+    /// its window is the group whose selected tab's title is the window's name, its
+    /// position in that group is the script's tab index.
+    static func tty(of entry: WindowEntry, in entries: [WindowEntry], tabs: [Tab]? = nil) -> String? {
+        guard entry.isTab, let key = entry.windowKey else { return nil }
+        let all = tabs ?? terminalTabs()
+        let same: (String, String) -> Bool = { a, b in a == b || a.hasPrefix(b) || b.hasPrefix(a) }
+        let group = entries.filter { $0.pid == entry.pid && $0.isTab && $0.windowKey == key }
+        guard let index = group.firstIndex(where: { $0.id == entry.id }) else { return nil }
+        for (_, wtabs) in Dictionary(grouping: all, by: \.windowIndex) {
+            guard let name = wtabs.first?.windowName, group.contains(where: { same($0.title, name) }) else { continue }
+            if let tab = wtabs.first(where: { $0.tabIndex == index + 1 }) { return tab.tty }
+        }
+        return nil
+    }
+
+    /// The tab's screen, by tty — one Apple Event, any window, front or not.
+    static func contents(ofTTY tty: String) -> String? {
+        let source = """
+        tell application "Terminal"
+            set found to contents of (tabs of windows whose tty is "/dev/\(tty)")
+            repeat with w in found
+                repeat with t in w
+                    return t as text
+                end repeat
+            end repeat
+            return ""
+        end tell
+        """
+        var err: NSDictionary?
+        guard let text = NSAppleScript(source: source)?.executeAndReturnError(&err).stringValue, !text.isEmpty else { return nil }
+        return text
+    }
+
     /// The WindowEntry (a Terminal tab) sitting on that tty. Windows are matched by name
     /// (the window's title is its selected tab's title), tabs by position within the window.
     static func entry(onTTY tty: String, in entries: [WindowEntry]) -> WindowEntry? {
