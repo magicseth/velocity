@@ -744,6 +744,24 @@ enum JuliaKeychain {
             }
             return .failed(class: "uncertain", why: "Sent yes to \(tty) twice but the question is still on screen — open it and answer there.")
         }
+        // velocity://label?project=<id>&x=<screenX>&y=<screenY> — he dragged a project chip
+        // onto an app window on the desktop; assign THAT window (the topmost placeable one
+        // under the point) to the project. The point is NSEvent.mouseLocation (bottom-left,
+        // points); CGWindowList is top-left, so flip against the primary display height.
+        if url.host == "label", let project = JuliaWorkspace.query(in: url, "project"),
+           let xs = JuliaWorkspace.query(in: url, "x"), let ys = JuliaWorkspace.query(in: url, "y"),
+           let x = Double(xs), let y = Double(ys) {
+            guard let hit = Self.placeableWindow(atScreenPoint: NSPoint(x: x, y: y), in: entries), let sig = hit.sig else {
+                return .failed(class: "stale", why: "No window there to label — drop the project onto an app window.")
+            }
+            guard let client = try? JuliaClient() else { return .failed(class: "unavailable", why: "Connect Velocity to Julia first.") }
+            let pid = project.isEmpty ? nil : (project as Any)
+            do { _ = try await client.call(path: "attention:placeWindow", ["token": JuliaKeychain.token(), "sig": sig, "projectId": pid as Any]) }
+            catch { return .failed(class: "uncertain", why: "Couldn’t label it: \(error.localizedDescription.prefix(120))") }
+            JuliaLog.note("labeled \(sig) → project \(project)")
+            WindowRaise.glow(windowID: hit.windowID, tint: .systemBlue)
+            return .verified(method: "self", observed: "labeled “\(hit.title.prefix(40))” for the project")
+        }
         if url.host == "type", let text = JuliaWorkspace.query(in: url, "text") {
             let enter = JuliaWorkspace.query(in: url, "enter") == "1"
             var entry: WindowEntry?
@@ -892,6 +910,28 @@ enum JuliaKeychain {
     /// The receipt for words that went in: `keys-posted` (what was posted, where) upgraded
     /// to `prompt-echoed` when Terminal's selected tab shows the tail of them — one
     /// AppleScript, given 200 ms; no answer in time leaves the method at what was seen.
+    /// The topmost PLACEABLE window (terminal/browser/chat/document — one with an identity of
+    /// its own) under a screen point. Julia's own strip and windows have no such sig, so they
+    /// are skipped; the desktop and menu bar are excluded by the list flags.
+    @MainActor static func placeableWindow(atScreenPoint p: NSPoint, in entries: [WindowEntry]) -> (sig: String?, title: String, windowID: CGWindowID)? {
+        let primaryH = NSScreen.screens.first(where: { $0.frame.origin == .zero })?.frame.height ?? NSScreen.main?.frame.height ?? 0
+        let pt = CGPoint(x: p.x, y: primaryH - p.y)
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return nil }
+        let byWindowID: [CGWindowID: WindowEntry] = Dictionary(entries.compactMap { e in e.element.flatMap(WindowRaise.windowID(of:)).map { ($0, e) } }, uniquingKeysWith: { a, _ in a })
+        let me = ProcessInfo.processInfo.processIdentifier
+        for w in list where (w[kCGWindowLayer as String] as? Int ?? 0) == 0 {
+            guard (w[kCGWindowOwnerPID as String] as? pid_t) != me,
+                  let b = w[kCGWindowBounds as String] as? [String: CGFloat], let bx = b["X"], let by = b["Y"], let bw = b["Width"], let bh = b["Height"],
+                  CGRect(x: bx, y: by, width: bw, height: bh).contains(pt),
+                  let id = w[kCGWindowNumber as String] as? CGWindowID else { continue }
+            guard let entry = byWindowID[id] else { continue }              // not in the catalog (Julia's own UI, etc.)
+            let sig = JuliaWorkspace.signature(entry)
+            if JuliaWorkspace.looksSensitive(entry.title) { return nil }    // never label a secret-titled window
+            return (sig, entry.title, id)                                   // the FIRST match front-to-back = topmost
+        }
+        return nil
+    }
+
     static func typedReceipt(text: String, enter: Bool, into where_: String) async -> ActReceipt {
         let posted = "\(text.count) chars\(enter ? " + Enter" : "") into \(where_)"
         let tail = String(text.suffix(40))
