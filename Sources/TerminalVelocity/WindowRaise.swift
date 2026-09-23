@@ -202,10 +202,33 @@ enum WindowRaise {
         guard let frame = frame(of: windowID) else { return }
         let panel = GlowPanel(around: frame, tint: tint)
         glows.append(panel)
+        // BEHIND THE WINDOW IT HALOES ("make sure the window highlight renders behind the
+        // window it is highlighting; it currently renders OVER prefrontal"): the panel takes
+        // the target's own window level, goes on screen (alpha 0), and is then ordered just
+        // beneath the target — AppKit's order(.below, relativeTo:) does take across apps, but
+        // only for a window that is already on screen (measured: called first, it left the
+        // ring off screen). The window hides the ring's inside; Julia's floating panels stay
+        // above. Verified once visible: the ring is the very next window behind the target.
+        panel.level = NSWindow.Level(rawValue: layer(of: windowID) ?? 0)
         panel.orderFrontRegardless()
+        panel.order(.below, relativeTo: Int(windowID))
+        let ring = CGWindowID(panel.windowNumber)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else { return }
+            let ids = list.compactMap { $0[kCGWindowNumber as String] as? CGWindowID }
+            let t = ids.firstIndex(of: windowID), r = ids.firstIndex(of: ring)
+            if let t, let r, r == t + 1 { JuliaLog.note("glow beneath \(windowID) (verified)") }
+            else { JuliaLog.note("glow NOT beneath \(windowID): target at \(t.map(String.init) ?? "off"), ring at \(r.map(String.init) ?? "off")") }
+        }
         panel.fadeOut { [weak panel] in
             glows.removeAll { $0 === panel }
         }
+    }
+
+    /// The window server's layer (= NSWindow.Level raw value) of a window.
+    static func layer(of windowID: CGWindowID) -> Int? {
+        guard let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[String: Any]] else { return nil }
+        return list.first?[kCGWindowLayer as String] as? Int
     }
 
     final class GlowPanel: NSPanel {
@@ -213,7 +236,7 @@ enum WindowRaise {
             let inset: CGFloat = -10
             super.init(contentRect: frame.insetBy(dx: inset, dy: inset), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             isOpaque = false; backgroundColor = .clear; hasShadow = false
-            level = .screenSaver          // above everything, briefly
+            level = .normal               // re-set to the target's level when shown
             ignoresMouseEvents = true
             collectionBehavior = [.canJoinAllSpaces, .transient, .ignoresCycle]
             contentView = GlowView(tint: tint)

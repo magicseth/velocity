@@ -28,6 +28,16 @@ final class AnswerWatcherTests: XCTestCase {
         e = AnswerWatcher.claude(lines, path: "/x/S.jsonl")
         XCTAssertEqual(e?.externalId, "claude-cli:S:u2"); XCTAssertEqual(e?.done, false); XCTAssertNil(e?.answer)
     }
+    func testAPasteIsHisTurnButItsBodyNeverLeaves() {
+        let lines = [user("paste me the token", "2026-09-21T10:00:00.000Z"),
+                     assistant("Please paste the token here.", "2026-09-21T10:00:05.000Z", stop: "end_turn"),
+                     user("\n\n<pasted_content id=\"925c\">\nToken created successfully\nquiet-water-9859\nabcDEF123456\n</pasted_content>", "2026-09-21T10:01:00.000Z", uuid: "u2")]
+        let e = AnswerWatcher.claude(lines, path: "/x/S.jsonl")
+        XCTAssertEqual(e?.externalId, "claude-cli:S:u2", "the paste is a new turn of his: the old answer no longer needs him")
+        XCTAssertEqual(e?.question, "(pasted text)")
+        XCTAssertNil(e?.answer)
+        XCTAssertFalse(e?.question.contains("quiet-water") ?? true, "the pasted body never leaves")
+    }
     func testOnlyHisWordsAndTheAgentsProseEverLeave() {
         let toolResult = line(["type": "user", "timestamp": "2026-09-21T10:00:01.000Z", "message": ["role": "user", "content": [["type": "tool_result", "content": "secret output"]]]])
         let reminder = user("<system-reminder>do things</system-reminder>", "2026-09-21T10:00:02.000Z", uuid: "u9")

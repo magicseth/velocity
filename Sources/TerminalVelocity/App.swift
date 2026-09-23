@@ -858,6 +858,14 @@ final class SearchPanel: NSPanel {
             } else { print("no exchange found in that transcript") }
             return
         }
+        // The incremental path the watcher actually takes after the first read: from a known offset.
+        if let i = CommandLine.arguments.firstIndex(of: "--last-exchange-from"), CommandLine.arguments.indices.contains(i + 2) {
+            let known = UInt64(CommandLine.arguments[i + 2])
+            if let (e, offset) = AnswerWatcher.read(CommandLine.arguments[i + 1], from: known) {
+                print("source=\(e.source) done=\(e.done) cwd=\(e.cwd ?? "-") id=\(e.externalId) questionAt=\(offset)\nQ: \(e.question.prefix(200))\nA: \((e.answer ?? "(none yet)").prefix(300))")
+            } else { print("no exchange found from offset \(known.map(String.init) ?? "nil")") }
+            return
+        }
         // Debugging media: what does Velocity see as Now Playing, and does its ⏯ press take?
         if CommandLine.arguments.contains("--media-probe") {
             print("somethingIsPlaying (CoreAudio):", JuliaHands.somethingIsPlaying())

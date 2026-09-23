@@ -90,6 +90,29 @@ final class AnswerWatcher {
         FSEventStreamSetDispatchQueue(s, DispatchQueue.global(qos: .utility))
         FSEventStreamStart(s)
         stream = s
+        catchUp()
+    }
+
+    /// WHAT CHANGED WHILE NOBODY WATCHED. A restart (an update, a crash) drops every event
+    /// between the old process and this one; a turn he typed in that gap is not seen until
+    /// the agent writes again — which, once it has answered, may be never (measured: his
+    /// paste landed 2 s before the new Velocity started watching, and the strip kept saying
+    /// the old answer needed him). So read once, at launch, every transcript touched in the
+    /// last hour. One read per launch — not a poll.
+    private func catchUp() {
+        let roots = self.roots
+        Task.detached(priority: .utility) {
+            let since = Date().addingTimeInterval(-3600)
+            var recent: [String] = []
+            for root in roots {
+                guard let e = FileManager.default.enumerator(at: URL(fileURLWithPath: root), includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles]) else { continue }
+                for case let url as URL in e where url.pathExtension == "jsonl" {
+                    if let m = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate, m > since { recent.append(url.path) }
+                }
+            }
+            guard !recent.isEmpty else { return }
+            await MainActor.run { [weak self] in self?.touched(recent) }
+        }
     }
 
     /// Transcripts are written many times a second while an agent works: gather, then read
@@ -108,6 +131,7 @@ final class AnswerWatcher {
             for path in batch {
                 let from = questionAt[path]
                 let parsed = await Task.detached(priority: .utility) { Self.read(path, from: from) }.value
+                JuliaLog.note("transcript \((path as NSString).lastPathComponent.prefix(24)) from=\(from.map(String.init) ?? "start") → \(parsed.map { "\($0.0.externalId.suffix(12)) answer=\($0.0.answer != nil) done=\($0.0.done)" } ?? "nothing")")
                 guard let (e, offset) = parsed else { continue }
                 questionAt[path] = offset
                 guard last[path] != e else { continue }
@@ -170,8 +194,15 @@ final class AnswerWatcher {
     /// Harness chatter is not his words: injected reminders, command wrappers, interrupts.
     /// A pasted screenshot arrives as "[Image #3]" and "[Image: source: /Users/…/9.png]".
     /// Those are attachments, not his words — and the second leaks a local path.
+    /// A PASTE IS HIS TURN, ITS BODY IS NOT HIS WORDS: Claude Code wraps a long paste as
+    /// "<pasted_content id=…>…</pasted_content>" — the answer to "paste me the token" —
+    /// and that body can be exactly a secret (measured: a Cloudflare API token). The turn
+    /// counts (his previous question is superseded, the strip stops saying it needs him);
+    /// the body never leaves. Before this, a paste-only turn began with "<" and was thrown
+    /// away as harness chatter, so the old answer sat on the strip as still needing him.
     nonisolated static func withoutAttachments(_ text: String) -> String {
-        text.replacingOccurrences(of: #"\[Image[^\]]*\]"#, with: "", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
+        text.replacingOccurrences(of: #"(?s)<pasted_content\b[^>]*>.*?</pasted_content>"#, with: "(pasted text)", options: .regularExpression)
+            .replacingOccurrences(of: #"\[Image[^\]]*\]"#, with: "", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     nonisolated static func isHis(_ text: String) -> Bool {

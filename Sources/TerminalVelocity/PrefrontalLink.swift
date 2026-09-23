@@ -215,7 +215,7 @@ struct PrefrontalCommand: Decodable, Equatable {
             let took: Bool
             do {
                 let r: TakeResult = try await client.mutation(PrefrontalFunction.take, with: ["token": token, "id": command.id])
-                took = r.took
+                took = r.took ?? false
                 if !took { JuliaLog.note("act \(command.kind) \(command.id.prefix(8)): \(r.status) already — nothing to do"); return }
             } catch {
                 JuliaLog.note("prefrontal: take \(command.id) failed: \(error.localizedDescription.prefix(200))")
@@ -229,10 +229,12 @@ struct PrefrontalCommand: Decodable, Equatable {
             var fields = receipt.settleFields
             fields["token"] = token
             fields["id"] = command.id
-            do { try await client.mutation(PrefrontalFunction.settle, with: fields) }
+            // Settle answers `{status}`; the result-less overload decodes a String and would
+            // report "failed" for a settle that took (measured: "data couldn't be read").
+            do { let r: TakeResult = try await client.mutation(PrefrontalFunction.settle, with: fields); if r.status != "done" && r.status != "failed" { JuliaLog.note("prefrontal: settle \(command.id.prefix(8)) → \(r.status)") } }
             catch { JuliaLog.note("prefrontal: settle \(command.id.prefix(8)) failed: \(error.localizedDescription.prefix(200))") }
         }
     }
 
-    private struct TakeResult: Decodable { let status: String; let took: Bool }
+    private struct TakeResult: Decodable { let status: String; let took: Bool? }
 }

@@ -160,13 +160,13 @@ final class JuliaWorkspaceTests: XCTestCase {
     }
     @MainActor func testTypingRefusesAnythingButATerminalThatCameToTheFront() async {
         let tab = entry("b", app: "Google Chrome", title: "Some page", url: "https://example.com")
-        let typed = await JuliaHands.type("hello", enter: true, into: tab) { }
+        let typed = await JuliaHands.type("hello", enter: true, into: tab) { true }
         XCTAssertFalse(typed, "never into a browser tab")
         let term = entry("t", app: "Terminal", title: "~/Projects/x — zsh", terminal: true)
-        let tooLong = await JuliaHands.type(String(repeating: "x", count: 5000), enter: false, into: term) { }
+        let tooLong = await JuliaHands.type(String(repeating: "x", count: 5000), enter: false, into: term) { true }
         XCTAssertFalse(tooLong, "bounded")
         // pid 900 is not a running app, so it can never be frontmost: nothing is typed.
-        let notFront = await JuliaHands.type("hello", enter: true, into: term) { }
+        let notFront = await JuliaHands.type("hello", enter: true, into: term) { true }
         XCTAssertFalse(notFront, "only once the terminal is actually in front")
     }
     func testOnlyChangesReachTheBoardAndAnEmptiedProjectIsForgotten() {
