@@ -204,12 +204,18 @@ enum WindowCatalog {
             // profile association and window controls) walks the browser chrome.
             let scripted = browser && browserTabsEnabled ? BrowserTabs.scan(browserID: app.bundleIdentifier!) : nil
             if let scripted, scripted.error == nil {
+                // THE PROFILE ICON IS A LOOKUP, NOT AN HEIRLOOM. Every path that makes a tab entry
+                // resolves it from the profile name (the load is cached by Local State's mtime);
+                // carrying it over from the previous entry meant a tab first published without
+                // one never got one ("i lost the profile icons on the chrome icons in velocity").
+                let earlyProfiles = app.bundleIdentifier == "com.google.Chrome" ? ChromeProfileIcon.load() : []
                 let earlyTabs = scripted.tabs.map { tab in
                     WindowEntry(id: "\(pid):browser:\(tab.windowID):\(tab.tabID)", pid: pid, appName: name,
                         title: tab.title.isEmpty ? tab.url : tab.title, icon: app.icon, element: nil,
                         minimized: tab.minimized, hidden: app.isHidden, terminal: false,
                         browserTab: tab, browser: true,
-                        browserProfile: profileName(windowTitle: tab.windowTitle, appName: name))
+                        browserProfile: profileName(windowTitle: tab.windowTitle, appName: name),
+                        browserProfileIcon: ChromeProfileIcon.matching(profileName(windowTitle: tab.windowTitle, appName: name), profiles: earlyProfiles))
                 }
                 progress?(pid, name, earlyTabs)
             }

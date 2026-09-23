@@ -172,6 +172,7 @@ enum JuliaKeychain {
     private var projectNames: [String: [String]] = [:]
     private var projectsFetchedAt = Date.distantPast
     private var workspace: [String: [JuliaWindow]] = [:]
+    private var firstSeen = FirstSeen()
     private var latch = JuliaWorkspace.WorkingLatch()
     private var pendingWorkspace: [String: [JuliaWindow]]?
     /// He asked an agent something; is there an answer? (AnswerWatcher.swift)
@@ -504,7 +505,7 @@ enum JuliaKeychain {
         if !projectTitles.isEmpty {
             let raw = JuliaWorkspace.manifest(names: projectNames, order: projectTitles, entries: all)
             let now = Date()
-            let current = raw.mapValues { latch.apply($0, now: now) }
+            let current = firstSeen.stamp(raw.mapValues { latch.apply($0, now: now) }, now: now)
             let changed = JuliaWorkspace.changes(previous: workspace, current: current)
             if !changed.isEmpty { pendingWorkspace = (pendingWorkspace ?? [:]).merging(changed) { _, new in new } }
             workspace = current
@@ -578,6 +579,7 @@ enum JuliaKeychain {
             if let state = w.state { d["state"] = state }
             if let task = w.task { d["task"] = task }
             if let sig = w.sig { d["sig"] = sig }
+            if let since = w.since { d["since"] = since }
             return d
         }
     }

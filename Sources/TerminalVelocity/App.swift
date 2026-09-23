@@ -586,15 +586,18 @@ final class SearchPanel: NSPanel {
                     return
                 }
                 let prior = Dictionary(self.model.all.filter { $0.pid == app.processIdentifier }.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+                let profiles = ChromeProfileIcon.load()   // cached by Local State's mtime
                 let entries = result.tabs.map { tab in
                     let id = "\(app.processIdentifier):browser:\(tab.windowID):\(tab.tabID)"
                     let old = prior[id]
+                    let profile = WindowCatalog.profileName(windowTitle: tab.windowTitle, appName: app.localizedName ?? "Google Chrome") ?? old?.browserProfile
                     return WindowEntry(id: id, pid: app.processIdentifier, appName: app.localizedName ?? "Google Chrome",
                         title: tab.title.isEmpty ? tab.url : tab.title, icon: app.icon, element: old?.element,
                         minimized: tab.minimized, hidden: app.isHidden, terminal: false, tab: old?.tab,
                         browserTab: tab, audio: old?.audio ?? .none, browser: true,
-                        browserProfile: WindowCatalog.profileName(windowTitle: tab.windowTitle, appName: app.localizedName ?? "Google Chrome") ?? old?.browserProfile,
-                        browserProfileIcon: old?.browserProfileIcon, browserPinned: old?.browserPinned ?? false)
+                        browserProfile: profile,
+                        // A lookup, never inherited: an entry born without an icon stayed without one.
+                        browserProfileIcon: ChromeProfileIcon.matching(profile, profiles: profiles) ?? old?.browserProfileIcon, browserPinned: old?.browserPinned ?? false)
                 }
                 self.chromeMetadataRevision += 1
                 self.snapshotGeneration += 1
@@ -664,7 +667,7 @@ final class SearchPanel: NSPanel {
                             var enriched = entry
                             enriched.audio = old.audio
                             enriched.browserProfile = entry.browserProfile ?? old.browserProfile
-                            enriched.browserProfileIcon = old.browserProfileIcon
+                            enriched.browserProfileIcon = entry.browserProfileIcon ?? old.browserProfileIcon
                             return enriched
                         }
                         self.model.all.removeAll { $0.pid == appPID }

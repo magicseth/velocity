@@ -204,4 +204,18 @@ final class JuliaWorkspaceTests: XCTestCase {
         XCTAssertEqual(JuliaWorkspace.query(in: URL(string: "velocity://foreground?project=convex%20os")!, "project"), "convex os")
         XCTAssertEqual(JuliaWorkspace.query(in: URL(string: "velocity://focus?project=x&window=901%3Awindow%3A5")!, "window"), "901:window:5")
     }
+    func testFirstSeenKnowsWhatAppearedAfterLaunchAndNotWhatWasThere() {
+        var seen = FirstSeen()
+        let w = { (k: String) in JuliaWindow(key: k, kind: "browser", app: "Chrome", title: k) }
+        let t0 = Date(timeIntervalSince1970: 1_000)
+        let first = seen.stamp(["*": [w("a")]], now: t0)
+        XCTAssertNil(first["*"]?.first?.since, "already open at launch: unknown, not now")
+        let second = seen.stamp(["*": [w("a"), w("b")]], now: t0.addingTimeInterval(5))
+        XCTAssertNil(second["*"]?[0].since)
+        XCTAssertEqual(second["*"]?[1].since, 1_005_000, "b appeared 5 s after launch")
+        let third = seen.stamp(["docs": [w("b")]], now: t0.addingTimeInterval(9))
+        XCTAssertEqual(third["docs"]?.first?.since, 1_005_000, "moving buckets keeps the time")
+        let back = seen.stamp(["*": [w("a")]], now: t0.addingTimeInterval(12))
+        XCTAssertEqual(back["*"]?.first?.since, 1_012_000, "closed and reopened: new again")
+    }
 }

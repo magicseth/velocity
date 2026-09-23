@@ -29,6 +29,34 @@ struct JuliaWindow: Equatable, Codable {
     /// chat's project. Julia remembers placements by this — so "that terminal belongs
     /// to ai budget" survives restarts, and a correction made once keeps holding.
     var sig: String? = nil
+    /// WHEN IT FIRST APPEARED (ms epoch), by this launch's eyes — so Julia can tell which
+    /// tabs an agent opened during its turn ("Opened a new Chrome window with fourteen
+    /// tabs…" — which ones?). Absent for whatever was already open when Velocity started:
+    /// unknown is not "now".
+    var since: Double? = nil
+}
+
+/// First-seen per window key, one launch's memory. The first scan is the baseline: what is
+/// already open gets no `since`. A key that disappears is forgotten, so a tab closed and
+/// reopened is new again.
+struct FirstSeen {
+    private var at: [String: Double] = [:]
+    private var baselined = false
+    mutating func stamp(_ manifest: [String: [JuliaWindow]], now: Date = Date()) -> [String: [JuliaWindow]] {
+        let ms = now.timeIntervalSince1970 * 1000
+        var live: Set<String> = []
+        var out = manifest
+        for (bucket, windows) in manifest {
+            out[bucket] = windows.map { w in
+                live.insert(w.key)
+                if at[w.key] == nil, baselined { at[w.key] = ms }
+                var copy = w; copy.since = at[w.key]; return copy
+            }
+        }
+        if !baselined { baselined = true; for k in live { at[k] = -1 } }   // known, but not when
+        at = at.filter { live.contains($0.key) }
+        return out.mapValues { $0.map { w in var c = w; if c.since == -1 { c.since = nil }; return c } }
+    }
 }
 
 enum JuliaWorkspace {
