@@ -28,6 +28,8 @@ final class SearchPanel: NSPanel {
     let attentionNotifications = AttentionNotifications()
     let julia = JuliaLink()
     let activeChip = ActiveProjectChip()
+    private var chipTimer: Timer?
+    private var lastChipEntryKey: String?
     var attentionCount = 0
     var eventHandler: EventHandlerRef?
     var keyboardMonitor: Any?
@@ -267,7 +269,13 @@ final class SearchPanel: NSPanel {
         activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.trackActivity() }
+            MainActor.assumeIsolated { self?.trackActivity(); self?.refreshActiveChip() }
+        }
+        // THE FOLLOW-CHIP runs on its OWN path — not gated by the palette (the palette-gated
+        // tracker was blocking it). A light timer catches within-app window/tab switches that
+        // send no activation notification.
+        chipTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshActiveChip() }
         }
         activityTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.trackActivity() }
@@ -318,14 +326,35 @@ final class SearchPanel: NSPanel {
     }
 
     private var lastChipWindow: CGWindowID?
+    /// Compute the frontmost real window and update the chip above it. Independent of the
+    /// palette; hidden only while Velocity itself is frontmost (its palette or picker has focus).
+    @MainActor func refreshActiveChip() {
+        guard AXIsProcessTrusted() else { return }
+        guard let app = NSWorkspace.shared.frontmostApplication,
+              app.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
+            // Velocity is front (palette/picker) — leave the chip as it is; do not hide, so the
+            // picker can sit under the chip he just clicked.
+            return
+        }
+        let entry = WindowCatalog.focusedEntry(app: app, known: model.all)
+        guard let entry else { activeChip.hide(); lastChipEntryKey = nil; return }
+        if entry.memoryKey == lastChipEntryKey, activeChip.isShowing { return }   // same window, already shown
+        lastChipEntryKey = entry.memoryKey
+        updateActiveChip(entry)
+    }
+
     @MainActor func updateActiveChip(_ entry: WindowEntry) {
-        // Only real, placeable windows (terminals, tabs, docs, chats) — Julia's own UI and the
-        // desktop have no signature. When it changes window, show the chip above the new one.
-        guard entry.element != nil, let wid = entry.element.flatMap(WindowRaise.windowID(of:)) else { activeChip.hide(); lastChipWindow = nil; return }
-        let kind = JuliaWorkspace.kind(entry)
-        guard ["terminal", "browser", "chat", "document"].contains(kind), !JuliaWorkspace.looksSensitive(entry.title) else { activeChip.hide(); lastChipWindow = nil; return }
+        // ANY real window can be tagged to a project — terminals and tabs are the meat, but a
+        // Settings or Notion window is taggable too. Skip only Julia's own UI, the desktop, and
+        // a secret-titled window (never labeled). "win:app:title" sigs are not generic.
+        guard let el = entry.element, let wid = WindowRaise.windowID(of: el),
+              entry.pid != ProcessInfo.processInfo.processIdentifier,
+              entry.launchURL == nil, !JuliaWorkspace.looksSensitive(entry.title) else {
+            activeChip.hide(); lastChipWindow = nil; return
+        }
         let sig = JuliaWorkspace.signature(entry)
         let project = julia.project(forSig: sig)
+        JuliaLog.note("chip → \(entry.appName) project=\(project ?? "tag")")
         activeChip.show(windowID: wid, sig: sig, project: project)
         lastChipWindow = wid
     }

@@ -8,6 +8,7 @@ import SwiftUI
     private let chip = ClickPanel()
     private var picker: NSPanel?
     private var current: (sig: String, windowID: CGWindowID)?
+    var isShowing: Bool { chip.isVisible }
     var projects: () -> [JuliaProjectRow] = { [] }
     var onAssign: (_ sig: String, _ projectId: String) -> Void = { _, _ in }
     var onCreate: (_ sig: String, _ title: String) -> Void = { _, _ in }
