@@ -211,6 +211,56 @@ enum WindowRaise {
     // MARK: glow
 
     private static var glows: [GlowPanel] = []
+    private static var chips: [CGWindowID: ProjectChipPanel] = [:]
+
+    /// A SMALL PROJECT CHIP floating just above a window — "so i know it's working" when a
+    /// window is classified into a project. Replaces any chip already on that window.
+    /// `linger`: keep it (a fresh classification lingers a few seconds, then fades); `sticky`
+    /// keeps it until cleared.
+    @MainActor static func projectChip(windowID: CGWindowID, title: String, tint: NSColor, sticky: Bool = false) {
+        guard let f = frame(of: windowID) else { return }
+        chips[windowID]?.orderOut(nil)
+        let chip = ProjectChipPanel(title: title, tint: tint)
+        chip.level = NSWindow.Level(rawValue: (layer(of: windowID) ?? 0) + 1)
+        let size = chip.frame.size
+        chip.setFrameOrigin(NSPoint(x: f.midX - size.width / 2, y: f.maxY - size.height + 6))
+        chips[windowID] = chip
+        chip.appear()
+        if !sticky {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) { [weak chip] in
+                chip?.fade { chips[windowID] = nil }
+            }
+        }
+    }
+    @MainActor static func clearChips() { for (_, c) in chips { c.orderOut(nil) }; chips.removeAll() }
+
+    final class ProjectChipPanel: NSPanel {
+        init(title: String, tint: NSColor) {
+            let label = NSTextField(labelWithString: "◆  " + title)
+            label.font = .systemFont(ofSize: 12, weight: .semibold)
+            label.textColor = .white
+            let pad = NSView(); pad.wantsLayer = true
+            pad.layer?.backgroundColor = tint.withAlphaComponent(0.95).cgColor
+            pad.layer?.cornerRadius = 9
+            pad.addSubview(label); label.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                label.leadingAnchor.constraint(equalTo: pad.leadingAnchor, constant: 11),
+                label.trailingAnchor.constraint(equalTo: pad.trailingAnchor, constant: -11),
+                label.topAnchor.constraint(equalTo: pad.topAnchor, constant: 5),
+                label.bottomAnchor.constraint(equalTo: pad.bottomAnchor, constant: -5)])
+            let size = NSSize(width: label.fittingSize.width + 22, height: label.fittingSize.height + 10)
+            super.init(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            isOpaque = false; backgroundColor = .clear; hasShadow = true
+            ignoresMouseEvents = true
+            collectionBehavior = [.canJoinAllSpaces, .transient, .ignoresCycle]
+            pad.frame = NSRect(origin: .zero, size: size); contentView = pad
+            alphaValue = 0
+        }
+        func appear() { orderFrontRegardless(); NSAnimationContext.runAnimationGroup { ctx in ctx.duration = 0.15; animator().alphaValue = 1 } }
+        func fade(done: @escaping () -> Void) {
+            NSAnimationContext.runAnimationGroup({ ctx in ctx.duration = 0.5; animator().alphaValue = 0 }) { self.orderOut(nil); done() }
+        }
+    }
 
     /// A soft ring in the project's colour around the window, fading over a second.
     @MainActor static func glow(windowID: CGWindowID, tint: NSColor) {

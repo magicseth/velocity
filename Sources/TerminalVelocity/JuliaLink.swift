@@ -536,10 +536,36 @@ enum JuliaKeychain {
             let current = firstSeen.stamp(raw.mapValues { latch.apply($0, now: now) }, now: now)
             let changed = JuliaWorkspace.changes(previous: workspace, current: current)
             if !changed.isEmpty { pendingWorkspace = (pendingWorkspace ?? [:]).merging(changed) { _, new in new } }
+            chipNewlyClassified(current, entries: all)
             workspace = current
         }
         if Date().timeIntervalSince(projectsFetchedAt) > 60 { refreshProjects() }
         sync()
+    }
+
+    /// Window key → the project it is in, so a chip shows only when a window is NEWLY classified
+    /// (or moves project), not on every manifest tick.
+    private var chippedInProject: [String: String] = [:]
+    private var chipsPrimed = false
+    private func chipNewlyClassified(_ manifest: [String: [JuliaWindow]], entries: [WindowEntry]) {
+        let byKey = Dictionary(entries.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        var live: [String: String] = [:]
+        for (project, windows) in manifest where project != "*" {
+            for w in windows { live[w.key] = project }
+        }
+        // ONLY THE ACTIVE WINDOW gets a chip (Seth: "only the active window") — a chip above
+        // every classified window is clutter; the one he is looking at, when it is newly
+        // classified, is the "it's working" news. First sync primes silently.
+        if chipsPrimed {
+            let frontPid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+            for (key, project) in live where chippedInProject[key] != project {
+                guard let entry = byKey[key], entry.pid == frontPid, let el = entry.element, let wid = WindowRaise.windowID(of: el) else { continue }
+                guard WindowRaise.isTop(windowID: wid, pid: entry.pid) else { continue }   // the frontmost window itself
+                WindowRaise.projectChip(windowID: wid, title: project, tint: .systemBlue)
+            }
+        }
+        chippedInProject = live
+        chipsPrimed = true
     }
 
     private func refreshProjects() {
@@ -770,9 +796,10 @@ enum JuliaKeychain {
             guard let hit = Self.placeableWindow(atScreenPoint: NSPoint(x: x, y: y), in: entries), let sig = hit.sig else {
                 return .failed(class: "stale", why: "No window there to label — drop the project onto an app window.")
             }
-            // GLOW FIRST — the flash is a local effect and must be instant; the placement
-            // write follows (a network hop should not delay the confirmation he sees).
+            // GLOW + A CHIP with the project name floating above the window — "so i know it's
+            // working". Instant, before the placement write (a network hop must not delay it).
             WindowRaise.glow(windowID: hit.windowID, tint: .systemBlue)
+            if let title = JuliaWorkspace.query(in: url, "title") { WindowRaise.projectChip(windowID: hit.windowID, title: title, tint: .systemBlue) }
             guard let client = try? JuliaClient() else { return .failed(class: "unavailable", why: "Connect Velocity to Julia first.") }
             let pid = project.isEmpty ? nil : (project as Any)
             do { _ = try await client.call(path: "attention:placeWindow", ["token": JuliaKeychain.token(), "sig": sig, "projectId": pid as Any]) }
