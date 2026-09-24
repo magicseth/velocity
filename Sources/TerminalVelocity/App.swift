@@ -288,8 +288,11 @@ final class SearchPanel: NSPanel {
                 self.model.filter()
             }
         }
-        if UserDefaults.standard.bool(forKey: "onboardingCompleted") && !CommandLine.arguments.contains("--onboarding") { show() }
-        else { showOnboarding() }
+        // DON'T POP THE PALETTE ON LAUNCH in the Julia build — Velocity runs as the harvester +
+        // hands and relaunches (updates, crash recovery, dev rebuilds) would flash the palette
+        // over his work ("the palette randomly shows up"). Option-space still opens it on demand.
+        if !UserDefaults.standard.bool(forKey: "onboardingCompleted") || CommandLine.arguments.contains("--onboarding") { showOnboarding() }
+        else if !Features.experimentalAgents { show() }
     }
 
     func trackActivity() {
@@ -332,13 +335,14 @@ final class SearchPanel: NSPanel {
         guard AXIsProcessTrusted() else { return }
         guard let app = NSWorkspace.shared.frontmostApplication,
               app.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
-            // Velocity is front (palette/picker) — leave the chip as it is; do not hide, so the
-            // picker can sit under the chip he just clicked.
+            // Velocity is front (its picker has focus) — leave everything as is.
             return
         }
         let entry = WindowCatalog.focusedEntry(app: app, known: model.all)
         guard let entry else { activeChip.hide(); lastChipEntryKey = nil; return }
         if entry.memoryKey == lastChipEntryKey, activeChip.isShowing { return }   // same window, already shown
+        // Switched to a different window (or clicked elsewhere) — close any open picker.
+        if activeChip.pickerOpen { activeChip.dismissPicker() }
         lastChipEntryKey = entry.memoryKey
         updateActiveChip(entry)
     }

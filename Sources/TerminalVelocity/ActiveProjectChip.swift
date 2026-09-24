@@ -23,12 +23,15 @@ import SwiftUI
         current = (sig, windowID)
         chip.render(project: project)
         let size = chip.frame.size
-        chip.setFrameOrigin(NSPoint(x: f.midX - size.width / 2, y: f.maxY - size.height + 7))
+        chip.setFrameOrigin(NSPoint(x: f.midX - size.width / 2, y: f.maxY - size.height + 15))
         chip.level = NSWindow.Level(rawValue: (WindowRaise.layer(of: windowID) ?? 0) + 1)
         chip.orderFrontRegardless()
         if picker != nil { positionPicker() }
     }
     func hide() { chip.orderOut(nil); closePicker(); current = nil }
+    /// Close only the picker (a window switch / click elsewhere), leaving the chip to re-place.
+    func dismissPicker() { closePicker() }
+    var pickerOpen: Bool { picker != nil }
 
     private func togglePicker() { if picker == nil { openPicker() } else { closePicker() } }
     private func closePicker() { picker?.orderOut(nil); picker = nil }
@@ -47,8 +50,11 @@ import SwiftUI
         p.contentView = host
         picker = p
         positionPicker()
-        NSApp.activate(ignoringOtherApps: true)   // so the search field can take keys
+        // A key-capable nonactivating panel takes keystrokes WITHOUT activating Velocity as a
+        // whole (activating it was making its palette appear). becomesKeyOnlyIfNeeded lets the
+        // text field become first responder for typing.
         p.makeKeyAndOrderFront(nil)
+        p.makeFirstResponder(host)
     }
     private func positionPicker() {
         guard let p = picker else { return }
@@ -82,7 +88,10 @@ import SwiftUI
         }
         override func mouseDown(with event: NSEvent) { onClick() }
     }
-    final class KeyPanel: NSPanel { override var canBecomeKey: Bool { true } }
+    final class KeyPanel: NSPanel {
+        override var canBecomeKey: Bool { true }
+        override var becomesKeyOnlyIfNeeded: Bool { get { false } set {} }
+    }
 }
 
 /// Type to filter existing projects; Enter or a row assigns; "Create" makes a new one.
@@ -92,6 +101,7 @@ private struct ProjectPickerView: View {
     let create: (String) -> Void
     let cancel: () -> Void
     @State private var query = ""
+    @FocusState private var focused: Bool
     private var filtered: [JuliaProjectRow] {
         let q = query.lowercased().trimmingCharacters(in: .whitespaces)
         if q.isEmpty { return Array(projects.prefix(40)) }
@@ -102,6 +112,7 @@ private struct ProjectPickerView: View {
         VStack(alignment: .leading, spacing: 6) {
             TextField("Filter or name a project", text: $query)
                 .textFieldStyle(.roundedBorder)
+                .focused($focused)
                 .onSubmit { let q = query.trimmingCharacters(in: .whitespaces); if let f = filtered.first, exact || filtered.count == 1 { assign(f.id) } else if !q.isEmpty { create(q) } }
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {
@@ -129,5 +140,6 @@ private struct ProjectPickerView: View {
         .frame(width: 260, height: 320)
         .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .windowBackgroundColor)))
         .onExitCommand { cancel() }
+        .onAppear { DispatchQueue.main.async { focused = true } }   // type immediately, no click into the field
     }
 }
