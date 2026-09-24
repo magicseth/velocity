@@ -27,6 +27,7 @@ final class SearchPanel: NSPanel {
     let objectiveFocus = ObjectiveFocus()
     let attentionNotifications = AttentionNotifications()
     let julia = JuliaLink()
+    let activeChip = ActiveProjectChip()
     var attentionCount = 0
     var eventHandler: EventHandlerRef?
     var keyboardMonitor: Any?
@@ -105,6 +106,9 @@ final class SearchPanel: NSPanel {
         menuBarFallback?.menu = { [weak self] in self?.statusMenu() ?? NSMenu() }
         julia.openEntry = { [weak self] entry in self?.choose(entry) }
         julia.onProjects = { [weak self] rows in self?.model.juliaProjects = rows }
+        activeChip.projects = { [weak self] in self?.julia.projectRows ?? [] }
+        activeChip.onAssign = { [weak self] sig, id in self?.julia.place(sig: sig, projectId: id) }
+        activeChip.onCreate = { [weak self] sig, title in self?.julia.createAndPlace(sig: sig, title: title) }
         julia.notice = { [weak self] text in self?.model.message = text }
         julia.allEntries = { [weak self] in self?.model.all ?? [] }
         julia.foreground = { [weak self] entries, lead in await self?.focusGroup(entries, selected: lead) ?? false }
@@ -307,8 +311,23 @@ final class SearchPanel: NSPanel {
                 if !self.model.all.contains(where: { $0.memoryKey == entry.memoryKey }) { self.model.all.append(entry) }
                 // NOW, for Julia: the window his hands are on (sent once per change, not per tick).
                 self.julia.now(entry)
+                // THE FOLLOW-CHIP: name this window's project above it (or a tag affordance).
+                self.updateActiveChip(entry)
             }
         }
+    }
+
+    private var lastChipWindow: CGWindowID?
+    @MainActor func updateActiveChip(_ entry: WindowEntry) {
+        // Only real, placeable windows (terminals, tabs, docs, chats) — Julia's own UI and the
+        // desktop have no signature. When it changes window, show the chip above the new one.
+        guard entry.element != nil, let wid = entry.element.flatMap(WindowRaise.windowID(of:)) else { activeChip.hide(); lastChipWindow = nil; return }
+        let kind = JuliaWorkspace.kind(entry)
+        guard ["terminal", "browser", "chat", "document"].contains(kind), !JuliaWorkspace.looksSensitive(entry.title) else { activeChip.hide(); lastChipWindow = nil; return }
+        let sig = JuliaWorkspace.signature(entry)
+        let project = julia.project(forSig: sig)
+        activeChip.show(windowID: wid, sig: sig, project: project)
+        lastChipWindow = wid
     }
 
     func installHotkeyHandler() {

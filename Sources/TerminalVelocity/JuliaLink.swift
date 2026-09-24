@@ -546,13 +546,16 @@ enum JuliaKeychain {
     /// Window key → the project it is in, so a chip shows only when a window is NEWLY classified
     /// (or moves project), not on every manifest tick.
     private var chippedInProject: [String: String] = [:]
+    private var projectBySig: [String: String] = [:]
     private var chipsPrimed = false
     private func chipNewlyClassified(_ manifest: [String: [JuliaWindow]], entries: [WindowEntry]) {
         let byKey = Dictionary(entries.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         var live: [String: String] = [:]
+        var bySig: [String: String] = [:]
         for (project, windows) in manifest where project != "*" {
-            for w in windows { live[w.key] = project }
+            for w in windows { live[w.key] = project; if let s = w.sig { bySig[s] = project } }
         }
+        projectBySig = bySig
         // ONLY THE ACTIVE WINDOW gets a chip (Seth: "only the active window") — a chip above
         // every classified window is clutter; the one he is looking at, when it is newly
         // classified, is the "it's working" news. First sync primes silently.
@@ -589,11 +592,35 @@ enum JuliaKeychain {
                     working: (p["working"] as? Double).map(Int.init) ?? 0,
                     repoPath: p["repoPath"] as? String)
             }
+            self.projectRows = rows
             self.onProjects?(rows)
         }
     }
     /// The palette subscribes to this — the projects Julia knows (empty until paired).
     var onProjects: (([JuliaProjectRow]) -> Void)?
+    /// The projects Julia knows (id/title), for the active-window chip's picker.
+    private(set) var projectRows: [JuliaProjectRow] = []
+    /// The project a window key is currently in (from the manifest), for the follow-chip.
+    func project(forKey key: String) -> String? { chippedInProject[key] }
+    /// The project a window's SIGNATURE is in — stable across the focused-entry vs catalog-entry
+    /// id mismatch (the follow-chip looks up by sig).
+    func project(forSig sig: String) -> String? { projectBySig[sig] }
+
+    /// PLACE a window (by its signature) on a project — his placement, remembered by what the
+    /// window is. `nil` project clears it. Used by the active-window chip's picker.
+    func place(sig: String, projectId: String?) {
+        guard state == .paired, let client = try? JuliaClient() else { return }
+        Task { _ = try? await client.call(path: "attention:placeWindow", ["token": token, "sig": sig, "projectId": projectId as Any]) }
+    }
+    /// CREATE a project by title, then place the window on it. Returns nothing; the chip
+    /// updates when the next manifest sync classifies the window.
+    func createAndPlace(sig: String, title: String) {
+        guard state == .paired, let client = try? JuliaClient() else { return }
+        Task {
+            guard let id = (try? await client.call(path: "momentum:create", ["token": token, "title": title])) as? String else { return }
+            _ = try? await client.call(path: "attention:placeWindow", ["token": token, "sig": sig, "projectId": id])
+        }
+    }
 
     private func sync() {
         guard !syncing, pendingReports != nil || pendingWorkspace != nil else { return }
