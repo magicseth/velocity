@@ -20,6 +20,35 @@ enum JuliaHands {
     /// Events routes the keystroke through the active app's responder chain (it targets
     /// whatever is frontmost), which is how a real keypress arrives. Returns true when
     /// AppleScript reported no error. `key` is a single character; `enter` sends Return.
+    /// INJECT INTO A TERMINAL TAB IN THE BACKGROUND — no foregrounding, no key-window, no beeps.
+    /// Terminal's `do script … in <tab>` types the text into that tab's running program (it
+    /// always adds a Return), so `text: ""` sends a bare Return (confirm the highlighted Yes).
+    /// The tab is found by its tty. Returns false when Terminal is not scriptable or no tab
+    /// matches. (`do script` on a busy tab types INTO it — it does not open a new window when a
+    /// tab is named.) Solves "obnoxious that it has to foreground the terminal".
+    @MainActor static func injectToTab(tty: String, text: String) -> Bool {
+        let esc = text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        let source = """
+        tell application "Terminal"
+            repeat with w in windows
+                try
+                    repeat with t in tabs of w
+                        if tty of t is "/dev/\(tty)" then
+                            do script "\(esc)" in t
+                            return "sent"
+                        end if
+                    end repeat
+                end try
+            end repeat
+            return "no match"
+        end tell
+        """
+        var err: NSDictionary?
+        let out = NSAppleScript(source: source)?.executeAndReturnError(&err).stringValue
+        if let msg = err?[NSAppleScript.errorMessage] as? String { JuliaLog.note("injectToTab error: \(msg)"); return false }
+        return out == "sent"
+    }
+
     @MainActor static func systemKeystroke(_ key: String, enter: Bool, activating pid: pid_t) async -> Bool {
         // Make the target the ACTIVE app first — System Events sends to the active app.
         NSRunningApplication(processIdentifier: pid)?.activate(options: [.activateIgnoringOtherApps])

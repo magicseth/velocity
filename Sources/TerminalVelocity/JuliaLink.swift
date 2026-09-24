@@ -737,43 +737,25 @@ enum JuliaKeychain {
             // title here; the KEYS come from the dialog on screen, not a guess.
             let harness = JuliaWorkspace.query(in: url, "harness") ?? AttentionPrompt.harness(title: target.entry.title)
             let keys = AttentionPrompt.yesKeys(screen: before, harness: harness)
-            JuliaLog.note("approve → tty \(tty) harness=\(harness ?? "?") keys=\(keys.text.isEmpty ? "Return" : keys.text)")
-            // Bring the exact tab to the front, then send the key the OS way (System Events).
-            guard let wid = target.select() else { return .failed(class: "stale", why: "That tab moved.") }
-            _ = await WindowRaise.bring(pid: target.entry.pid, windowID: wid)
-            WindowRaise.glow(windowID: wid, tint: glowTint)
-            for _ in 0..<10 { if ConversationTTY.isFront(tty: tty) { break }; try? await Task.sleep(for: .milliseconds(100)) }
-            let ok = await JuliaHands.systemKeystroke(keys.text, enter: keys.enter, activating: target.entry.pid)
-            JuliaLog.note("approve keypress: ok=\(ok) isFront=\(ConversationTTY.isFront(tty: tty)) key=\(keys.text.isEmpty ? "Return" : keys.text)")
-            guard ok else { return .failed(class: "uncertain", why: "Couldn’t answer that tab (it didn’t come to the front) — nothing was typed.") }
-            // The receipt is the CHOICE PROMPT leaving the screen (not the whole question —
-            // its scrollback lingers). Up to 4 s: the agent redraws once it acts on the yes.
-            // STILL ASKING? The dialog is gone only when NONE of its markers remain in the tail —
-            // not merely when one line scrolled off. A stray character (a mis-sent "y") shifts a
-            // line and would fool a single-line check into a false "cleared" while the dialog is
-            // still up (measured: the receipt said cleared but he still had to hit Enter).
+            JuliaLog.note("approve → tty \(tty) harness=\(harness ?? "?") keys=\(keys.text.isEmpty ? "Return" : keys.text) (background)")
             func stillAsking(_ screen: String) -> Bool {
                 let t = String(screen.suffix(600)).lowercased()
                 return t.contains("press enter to confirm") || t.contains("enter to confirm") || t.contains("do you want to proceed") || t.range(of: #"[❯›▶]\s*1\.\s*yes"#, options: .regularExpression) != nil
             }
-            if let after0 = ConversationTTY.contents(ofTTY: tty) { JuliaLog.note("approve after \(keys.text.isEmpty ? "Return" : keys.text): stillAsking=\(stillAsking(after0)) tail=…\(String(after0.suffix(120)).replacingOccurrences(of: "\n", with: "⏎").suffix(90))") }
-            for _ in 0..<20 {
-                try? await Task.sleep(for: .milliseconds(200))
-                guard let now = ConversationTTY.contents(ofTTY: tty) else { continue }
-                if !stillAsking(now) {
-                    return .verified(method: "prompt-cleared", observed: "the question left \(tty)’s screen after \(keys.text.isEmpty ? "Return" : "“\(keys.text)”")")
+            // IN THE BACKGROUND: Terminal types the key into the exact tab by tty — no
+            // foregrounding, no key-window juggling, no beeps. `do script "" in <tab>` sends a
+            // bare Return; a letter sends that letter (+ Return).
+            func inject() -> Bool { JuliaHands.injectToTab(tty: tty, text: keys.enter ? "" : keys.text) }
+            guard inject() else { return .failed(class: "uncertain", why: "Couldn’t reach that tab in Terminal — open it and answer there.") }
+            for attempt in 0..<2 {
+                for _ in 0..<15 {
+                    try? await Task.sleep(for: .milliseconds(200))
+                    guard let now = ConversationTTY.contents(ofTTY: tty) else { continue }
+                    if !stillAsking(now) {
+                        return .verified(method: "prompt-cleared", observed: "answered \(tty) in the background with \(keys.text.isEmpty ? "Return" : "“\(keys.text)”")")
+                    }
                 }
-            }
-            // Still showing after 4 s: the key did not take. Try ONCE more, then report honestly.
-            JuliaLog.note("approve: \(tty) still asking after 4 s — retrying the key once")
-            if let wid2 = target.select() { _ = await WindowRaise.bring(pid: target.entry.pid, windowID: wid2) }
-            for _ in 0..<10 { if ConversationTTY.isFront(tty: tty) { break }; try? await Task.sleep(for: .milliseconds(100)) }
-            _ = await JuliaHands.systemKeystroke(keys.text, enter: keys.enter, activating: target.entry.pid)
-            for _ in 0..<10 {
-                try? await Task.sleep(for: .milliseconds(200))
-                if let now = ConversationTTY.contents(ofTTY: tty), !stillAsking(now) {
-                    return .verified(method: "prompt-cleared", observed: "the question left \(tty)’s screen (second try)")
-                }
+                if attempt == 0 { JuliaLog.note("approve: \(tty) still asking after 3 s — one more inject"); _ = inject() }
             }
             return .failed(class: "uncertain", why: "Sent yes to \(tty) twice but the question is still on screen — open it and answer there.")
         }

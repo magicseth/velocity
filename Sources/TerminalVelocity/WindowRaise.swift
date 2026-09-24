@@ -185,6 +185,21 @@ enum WindowRaise {
     }
 
     /// The window's on-screen frame (Cocoa coordinates), from the window server.
+    /// GIVE THE WINDOW KEYBOARD FOCUS the way a real click does. Measured: the window-server
+    /// raise brings a window to the FRONT but not to KEY — the OS beeps and drops injected keys
+    /// until he clicks it ("the terminal is foreground but doesn't have keyboard focus… i hear
+    /// little beeps"). A synthetic click on the TITLE BAR (never captured by a TUI, unlike the
+    /// content) makes it key, exactly as his click does. Top-left CG coords.
+    @MainActor static func focusByClick(windowID: CGWindowID) {
+        guard let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[String: Any]],
+              let b = list.first?[kCGWindowBounds as String] as? [String: CGFloat],
+              let x = b["X"], let y = b["Y"], let w = b["Width"], w > 0 else { return }
+        let pt = CGPoint(x: x + w / 2, y: y + 11)   // title bar, top-centre
+        let src = CGEventSource(stateID: .combinedSessionState)
+        CGEvent(mouseEventSource: src, mouseType: .leftMouseDown, mouseCursorPosition: pt, mouseButton: .left)?.post(tap: .cghidEventTap)
+        CGEvent(mouseEventSource: src, mouseType: .leftMouseUp, mouseCursorPosition: pt, mouseButton: .left)?.post(tap: .cghidEventTap)
+    }
+
     static func frame(of windowID: CGWindowID) -> NSRect? {
         guard let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[String: Any]],
               let info = list.first, let b = info[kCGWindowBounds as String] as? [String: CGFloat],

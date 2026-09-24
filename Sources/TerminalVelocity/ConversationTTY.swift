@@ -190,6 +190,19 @@ enum ConversationTTY {
         return NSAppleScript(source: source)?.executeAndReturnError(&err).stringValue == "/dev/" + tty
     }
 
+    /// The tty of Terminal's front window's selected tab, right now (what a keystroke hits).
+    static func frontSelectedTTY() -> String? {
+        let source = """
+        tell application "Terminal"
+            if (count of windows) is 0 then return ""
+            return tty of selected tab of front window
+        end tell
+        """
+        var err: NSDictionary?
+        guard let s = NSAppleScript(source: source)?.executeAndReturnError(&err).stringValue, s.hasPrefix("/dev/") else { return nil }
+        return (s as NSString).lastPathComponent
+    }
+
     /// DID THE WORDS LAND? The selected tab's contents, asked once of Terminal; true when
     /// the tail of what was typed shows in the last lines. Bounded: the caller races this
     /// against a short deadline (an Apple Event can stall) and treats "no answer" as not
