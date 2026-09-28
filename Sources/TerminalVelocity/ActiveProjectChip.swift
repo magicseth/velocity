@@ -8,6 +8,10 @@ import SwiftUI
     private let chip = ClickPanel()
     private var picker: NSPanel?
     private var current: (sig: String, windowID: CGWindowID)?
+    private var shownState: (windowID: CGWindowID, project: String?, origin: NSPoint)?
+    /// sig → the project he just chose in the picker, shown immediately (the server sync lands a
+    /// beat later). Cleared once the server agrees or after a timeout.
+    private var optimistic: [String: (title: String, at: Date)] = [:]
     var isShowing: Bool { chip.isVisible }
     var projects: () -> [JuliaProjectRow] = { [] }
     var onAssign: (_ sig: String, _ projectId: String) -> Void = { _, _ in }
@@ -21,14 +25,26 @@ import SwiftUI
     func show(windowID: CGWindowID, sig: String, project: String?) {
         guard let f = WindowRaise.frame(of: windowID) else { hide(); return }
         current = (sig, windowID)
+        var project = project
+        if let o = optimistic[sig] {
+            if project == o.title || Date().timeIntervalSince(o.at) > 20 { optimistic[sig] = nil }   // server agreed, or gave up
+            else { project = o.title }
+        }
         chip.render(project: project)
         let size = chip.frame.size
-        chip.setFrameOrigin(NSPoint(x: f.midX - size.width / 2, y: f.maxY - size.height + 15))
+        let origin = NSPoint(x: (f.midX - size.width / 2).rounded(), y: (f.maxY - size.height + 15).rounded())
+        // IDEMPOTENT — do not re-order/re-place an unchanged chip every 0.6s tick (that churn
+        // pinned WindowServer and felt "frozen"). Only touch the panel when something changed.
+        if let s = shownState, s.windowID == windowID, s.project == project, s.origin == origin, chip.isVisible {
+            return
+        }
+        chip.setFrameOrigin(origin)
         chip.level = NSWindow.Level(rawValue: (WindowRaise.layer(of: windowID) ?? 0) + 1)
         chip.orderFrontRegardless()
+        shownState = (windowID, project, origin)
         if picker != nil { positionPicker() }
     }
-    func hide() { chip.orderOut(nil); closePicker(); current = nil }
+    func hide() { guard chip.isVisible || picker != nil else { return }; chip.orderOut(nil); closePicker(); current = nil; shownState = nil }
     /// Close only the picker (a window switch / click elsewhere), leaving the chip to re-place.
     func dismissPicker() { closePicker() }
     var pickerOpen: Bool { picker != nil }
@@ -39,8 +55,17 @@ import SwiftUI
         guard let cur = current else { return }
         let sig = cur.sig
         let view = ProjectPickerView(projects: projects(),
-            assign: { [weak self] id in self?.onAssign(sig, id); self?.closePicker() },
-            create: { [weak self] title in self?.onCreate(sig, title); self?.closePicker() },
+            assign: { [weak self] id in
+                guard let self else { return }
+                if let title = self.projects().first(where: { $0.id == id })?.title {
+                    self.optimistic[sig] = (title, Date()); self.chip.render(project: title); self.shownState = nil
+                }
+                self.onAssign(sig, id); self.closePicker()
+            },
+            create: { [weak self] title in
+                self?.optimistic[sig] = (title, Date()); self?.chip.render(project: title); self?.shownState = nil
+                self?.onCreate(sig, title); self?.closePicker()
+            },
             cancel: { [weak self] in self?.closePicker() })
         let host = NSHostingView(rootView: view)
         host.setFrameSize(NSSize(width: 260, height: 320))

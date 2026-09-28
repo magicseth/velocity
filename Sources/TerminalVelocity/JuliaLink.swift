@@ -593,6 +593,14 @@ enum JuliaKeychain {
                     repoPath: p["repoPath"] as? String)
             }
             self.projectRows = rows
+            // AUTHORITATIVE sig→project from the server (includes his placements and Jev, which
+            // the LOCAL name-match manifest does not) — so a freshly tagged tab's chip updates.
+            var bySig: [String: String] = [:]
+            for p in projects {
+                guard let title = p["title"] as? String else { continue }
+                for w in (p["windows"] as? [[String: Any]]) ?? [] { if let s = w["sig"] as? String { bySig[s] = title } }
+            }
+            self.serverProjectBySig = bySig
             self.onProjects?(rows)
         }
     }
@@ -604,21 +612,27 @@ enum JuliaKeychain {
     func project(forKey key: String) -> String? { chippedInProject[key] }
     /// The project a window's SIGNATURE is in — stable across the focused-entry vs catalog-entry
     /// id mismatch (the follow-chip looks up by sig).
-    func project(forSig sig: String) -> String? { projectBySig[sig] }
+    private var serverProjectBySig: [String: String] = [:]
+    /// His placements/Jev (server) win over the local name-match manifest.
+    func project(forSig sig: String) -> String? { serverProjectBySig[sig] ?? projectBySig[sig] }
 
     /// PLACE a window (by its signature) on a project — his placement, remembered by what the
     /// window is. `nil` project clears it. Used by the active-window chip's picker.
     func place(sig: String, projectId: String?) {
         guard state == .paired, let client = try? JuliaClient() else { return }
-        Task { _ = try? await client.call(path: "attention:placeWindow", ["token": token, "sig": sig, "projectId": projectId as Any]) }
+        Task { [weak self] in
+            _ = try? await client.call(path: "attention:placeWindow", ["token": self?.token ?? "", "sig": sig, "projectId": projectId as Any])
+            try? await Task.sleep(for: .milliseconds(500)); self?.refreshProjects()
+        }
     }
     /// CREATE a project by title, then place the window on it. Returns nothing; the chip
     /// updates when the next manifest sync classifies the window.
     func createAndPlace(sig: String, title: String) {
         guard state == .paired, let client = try? JuliaClient() else { return }
-        Task {
-            guard let id = (try? await client.call(path: "momentum:create", ["token": token, "title": title])) as? String else { return }
-            _ = try? await client.call(path: "attention:placeWindow", ["token": token, "sig": sig, "projectId": id])
+        Task { [weak self] in
+            guard let self, let id = (try? await client.call(path: "momentum:create", ["token": self.token, "title": title])) as? String else { return }
+            _ = try? await client.call(path: "attention:placeWindow", ["token": self.token, "sig": sig, "projectId": id])
+            try? await Task.sleep(for: .milliseconds(500)); self.refreshProjects()
         }
     }
 
