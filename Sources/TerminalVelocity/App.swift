@@ -847,9 +847,14 @@ final class SearchPanel: NSPanel {
     func choose(_ entry: WindowEntry) {
         if let pr = entry.project {
             panel.orderOut(nil)
-            let members = model.all.filter { pr.windowKeys.contains($0.id) }
+            // FIND THE LIVE WINDOWS by identity, not the server's stale keys (a window's id
+            // changes, so the keys pointed at nothing and the terminal never came forward). Its
+            // name-matched windows plus any he placed here by signature.
+            var members = JuliaWorkspace.group(for: pr.title, names: pr.matchNames, in: model.all)?.entries ?? []
+            for w in model.all where !members.contains(where: { $0.id == w.id }) && julia.project(forSig: JuliaWorkspace.signature(w)) == pr.title {
+                members.append(w)
+            }
             guard let lead = members.first(where: \.terminal) ?? members.first else {
-                // Nothing open: offer its folder (a new terminal) if it has one.
                 model.message = pr.repoPath != nil ? "No windows open for \(pr.title) — open its folder from Julia." : "No windows open for \(pr.title)."
                 refresh(); return
             }
