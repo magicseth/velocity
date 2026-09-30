@@ -104,8 +104,8 @@ final class SearchPanel: NSPanel {
         status.button?.action = #selector(statusClicked)
         status.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         status.button?.toolTip = "Terminal Velocity — search windows"
-        menuBarFallback = MenuBarFallback(status: status)
-        menuBarFallback?.menu = { [weak self] in self?.statusMenu() ?? NSMenu() }
+        // No on-screen "Velocity" fallback button — it floated over his work when the menu bar
+        // was crowded. The menu-bar icon and option-space are the ways in.
         julia.openEntry = { [weak self] entry in self?.choose(entry) }
         julia.onProjects = { [weak self] rows in self?.model.juliaProjects = rows }
         activeChip.projects = { [weak self] in self?.julia.projectRows ?? [] }
