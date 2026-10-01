@@ -10,9 +10,12 @@ struct ClosedTab: Codable, Identifiable {
     let launch: Date
     let closed: Date
 
+    /// Chrome's app icon never changes; loading it from disk on every `.entry` (filter maps this
+    /// over all closed tabs each keystroke) was a main-thread cost in the sample. Load it once.
+    static let chromeIcon: NSImage? = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome").map { NSWorkspace.shared.icon(forFile: $0.path) }
     var entry: WindowEntry {
         var result = WindowEntry(id: "closed:\(id)", pid: pid, appName: "Google Chrome", title: title,
-            icon: NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome").map { NSWorkspace.shared.icon(forFile: $0.path) },
+            icon: ClosedTab.chromeIcon,
             element: nil, minimized: false, hidden: false, terminal: false,
             browser: true, browserProfile: profile)
         result.closedTab = self

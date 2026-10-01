@@ -65,8 +65,21 @@ struct WindowEntry: Identifiable, @unchecked Sendable {
         else if terminal { identity = appName + ":" + title.components(separatedBy: " — ")[0] }
         else { identity = appName + ":" + WindowCatalog.cleanTabTitle(title) }
         // Remember only user-selected identifiers, not a browsing log.
-        return SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
+        // Fast hex: String(format: "%02x") ran the NSString validated-format machinery 32 times
+        // per key, and memoryKey is read over every window many times a second (filter,
+        // trackActivity, attentionEntries) — it was a top main-thread cost in the sample. A
+        // byte-table encode is ~100x cheaper for the same output.
+        return WindowEntry.hex(SHA256.hash(data: Data(identity.utf8)))
     }
+    private static let hexTable: [UInt8] = Array("0123456789abcdef".utf8)
+    private static func hex<S: Sequence>(_ digest: S) -> String where S.Element == UInt8 {
+        var bytes = [UInt8](); bytes.reserveCapacity(64)
+        for b in digest { bytes.append(hexTable[Int(b >> 4)]); bytes.append(hexTable[Int(b & 0x0f)]) }
+        return String(decoding: bytes, as: UTF8.self)
+    }
+    // Constructing a RelativeDateTimeFormatter is expensive (ICU setup); subtitle runs per row
+    // per render, so build it once.
+    nonisolated(unsafe) static let relativeFormatter = RelativeDateTimeFormatter()
     var isTab: Bool { tab != nil || browserTab != nil || closedTab != nil || cachedTerminal?.tabTitle != nil }
     var subtitle: String {
         if let project {
@@ -80,7 +93,7 @@ struct WindowEntry: Identifiable, @unchecked Sendable {
         }
         if cachedTerminal != nil { return appName + " · Cached session · checking availability…" }
         if let closedTab {
-            let age = RelativeDateTimeFormatter().localizedString(for: closedTab.closed, relativeTo: Date())
+            let age = WindowEntry.relativeFormatter.localizedString(for: closedTab.closed, relativeTo: Date())
             return [appName, "Recently closed " + age, browserProfile, URL(string: closedTab.url)?.host].compactMap { $0 }.joined(separator: " · ")
         }
         if let conversation { return appName + (conversation.appID == Conversations.slackID ? " · Channel / DM" : " · Conversation") }

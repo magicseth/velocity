@@ -79,7 +79,7 @@ struct JuliaReporter: Equatable {
                 .flatMap(JuliaJumpHandle.encode)
             return JuliaReport(externalId: JuliaJumpHandle.id(key), project: presentation.project,
                 subtask: presentation.task, jumpHandle: handle,
-                prompt: seen?.contents.flatMap { AttentionPrompt.extract($0) }, harness: AttentionPrompt.harness(title: entry.title))
+                prompt: seen?.contents.flatMap { AttentionPrompt.extract($0) }.flatMap { AttentionPrompt.pending($0) ? $0 : nil }, harness: AttentionPrompt.harness(title: entry.title))
         }.sorted { $0.externalId < $1.externalId }
     }
 
@@ -203,6 +203,11 @@ enum JuliaKeychain {
     private var pairingTask: Task<Void, Never>?
     private var syncing = false
     private var pendingReports: [JuliaReport]?
+    /// Reading terminal SCREENS is AppleScript to Terminal + tty reads — hundreds of ms.
+    /// It runs off the main thread on this serial queue (one script at a time); only the
+    /// report + sync return to main. observingScreens coalesces overlapping observes.
+    private static let screenQueue = DispatchQueue(label: "dev.terminalvelocity.julia-screen", qos: .utility)
+    private var observingScreens = false
     private let store = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/Velocity/julia-reports.json")
     /// prefrontal/1: commands addressed to this Mac arrive here by subscription.
@@ -358,19 +363,26 @@ enum JuliaKeychain {
     /// it knows — a handle back to the exact terminal tab the conversation is in.
     private func report(_ e: Exchange) {
         guard state == .paired, let client = try? JuliaClient() else { return }
-        var args: [String: Any] = ["token": token, "externalId": e.externalId, "source": e.source, "sessionId": e.sessionId,
-            "project": e.cwd.map { ($0 as NSString).lastPathComponent } ?? e.source, "question": e.question,
-            "askedAt": e.askedAt, "done": e.done, "machineId": MachineIdentity.machineId]
-        if let cwd = e.cwd { args["cwd"] = cwd }
-        if let answer = e.answer { args["answer"] = answer }
-        if let at = e.answeredAt { args["answeredAt"] = at }
-        // THE TAB, NOT THE FOLDER: two agents can share a folder; the tty is the one.
-        let tty = ConversationTTY.tty(source: e.source, sessionId: e.sessionId, cwd: e.cwd, startedAt: e.askedAt)
-        let entries = allEntries?() ?? []
-        JuliaLog.note("report \(e.source) \(e.sessionId.prefix(8)) cwd=\(e.cwd ?? "-") tty=\(tty ?? "unresolved")")
-        if let tty, let jump = Self.jumpHandle(onTTY: tty, in: entries) { args["jump"] = jump }
-        else if let cwd = e.cwd, let jump = Self.jumpHandle(forFolder: cwd, in: entries, tty: tty) { args["jump"] = jump }
-        Task { _ = try? await client.call(.exchange, args) }
+        let token = self.token
+        let entries = allEntries?() ?? []   // read model state on the main thread
+        // Resolving the jump handle calls ConversationTTY.entry -> terminalTabs(), which is
+        // AppleScript to Terminal. A transcript updates often while agents work, and this used
+        // to run on the MAIN THREAD (the second stall the sample caught after the screen read).
+        // Build the args + resolve the handle off the main thread, then call.
+        Self.screenQueue.async {
+            var args: [String: Any] = ["token": token, "externalId": e.externalId, "source": e.source, "sessionId": e.sessionId,
+                "project": e.cwd.map { ($0 as NSString).lastPathComponent } ?? e.source, "question": e.question,
+                "askedAt": e.askedAt, "done": e.done, "machineId": MachineIdentity.machineId]
+            if let cwd = e.cwd { args["cwd"] = cwd }
+            if let answer = e.answer { args["answer"] = answer }
+            if let at = e.answeredAt { args["answeredAt"] = at }
+            // THE TAB, NOT THE FOLDER: two agents can share a folder; the tty is the one.
+            let tty = ConversationTTY.tty(source: e.source, sessionId: e.sessionId, cwd: e.cwd, startedAt: e.askedAt)
+            JuliaLog.note("report \(e.source) \(e.sessionId.prefix(8)) cwd=\(e.cwd ?? "-") tty=\(tty ?? "unresolved")")
+            if let tty, let jump = Self.jumpHandle(onTTY: tty, in: entries) { args["jump"] = jump }
+            else if let cwd = e.cwd, let jump = Self.jumpHandle(forFolder: cwd, in: entries, tty: tty) { args["jump"] = jump }
+            Task { _ = try? await client.call(.exchange, args) }
+        }
     }
 
     /// RAISE A WINDOW FROM THE BACKGROUND. macOS 14 lets an app hand activation to
@@ -491,7 +503,7 @@ enum JuliaKeychain {
     }
 
     /// The exact tab on that tty — the conversation's own terminal.
-    static func jumpHandle(onTTY tty: String, in entries: [WindowEntry]) -> String? {
+    nonisolated static func jumpHandle(onTTY tty: String, in entries: [WindowEntry]) -> String? {
         guard let entry = ConversationTTY.entry(onTTY: tty, in: entries),
               let launch = NSRunningApplication(processIdentifier: entry.pid)?.launchDate,
               let destination = AttentionDestination(entry: entry, launch: launch, tty: tty) else { return nil }
@@ -499,7 +511,7 @@ enum JuliaKeychain {
     }
     /// The terminal sitting in that folder — preferring one whose title shows an agent.
     /// A guess when there are several; the tty rides along so a later resolve can do better.
-    static func jumpHandle(forFolder cwd: String, in entries: [WindowEntry], tty: String? = nil) -> String? {
+    nonisolated static func jumpHandle(forFolder cwd: String, in entries: [WindowEntry], tty: String? = nil) -> String? {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let sig = "term:" + (cwd.hasPrefix(home) ? "~" + cwd.dropFirst(home.count) : cwd).lowercased()
         let here = entries.filter { $0.terminal && JuliaWorkspace.signature($0) == sig }
@@ -520,18 +532,46 @@ enum JuliaKeychain {
     func observe(attention entries: [WindowEntry], all: [WindowEntry] = []) {
         guard state == .paired else { return }
         if answers == nil { answers = AnswerWatcher { [weak self] exchange in self?.report(exchange) } }
-        // The screen of every waiting tab: the tabs once, then one event per waiting tab.
-        var tabs: [ConversationTTY.Tab]?
+        // Which tabs are WAITING is cheap (title-based); reading their SCREENS is not —
+        // terminalTabs() is AppleScript to Terminal (hundreds of ms, and it pumps the runloop
+        // into a re-entrant SwiftUI layout) plus tty reads. That read used to run on the MAIN
+        // thread from refreshAudio + the scan completions every couple seconds, freezing every
+        // keystroke ("still really slow" — a thread sample caught it under NSAppleScript
+        // _execute). Read the screens off the main thread (the media path already scripts
+        // Terminal off-main), then finish the report + manifest + sync back on main.
+        guard !observingScreens else { return }
+        observingScreens = true
+        let waiting = Array(AttentionNotifications.waiting(entries).values)
+        let titles = projectTitles   // capture main-actor state for the background manifest
+        let names = projectNames
+        Self.screenQueue.async { [weak self] in
+            let tabs = ConversationTTY.terminalTabs()
+            var screens: [String: (tty: String?, contents: String?)] = [:]
+            for entry in waiting {
+                let tty = ConversationTTY.tty(of: entry, in: all, tabs: tabs)
+                let contents = tty.flatMap(ConversationTTY.contents(ofTTY:))
+                screens[entry.id] = (tty, contents)
+                JuliaLog.note("asking: \u{201c}\(entry.title.prefix(50))\u{201d} tty=\(tty ?? "unresolved") screen=\(contents.map { "\($0.count) chars" } ?? "none") tabs=\(tabs.count) isTab=\(entry.isTab) key=\(entry.windowKey ?? "nil")")
+            }
+            // The per-project manifest is pure string matching over every window × every project
+            // name — 227 samples on the main thread. Compute it here, off main; finishObserve only
+            // stamps it (firstSeen/latch) and syncs.
+            let rawManifest = titles.isEmpty ? nil : JuliaWorkspace.manifest(names: names, order: titles, entries: all)
+            DispatchQueue.main.async { [weak self] in
+                self?.observingScreens = false
+                self?.finishObserve(entries: entries, all: all, screens: screens, rawManifest: rawManifest)
+            }
+        }
+    }
+
+    /// The report + manifest + sync, on the main thread, with the screens already read off it.
+    private func finishObserve(entries: [WindowEntry], all: [WindowEntry], screens: [String: (tty: String?, contents: String?)], rawManifest: [String: [JuliaWindow]]?) {
+        guard state == .paired else { return }
         let reports = JuliaReporter.reports(entries, launch: { NSRunningApplication(processIdentifier: $0)?.launchDate }) { entry in
-            if tabs == nil { tabs = ConversationTTY.terminalTabs() }
-            let tty = ConversationTTY.tty(of: entry, in: all, tabs: tabs)
-            let contents = tty.flatMap(ConversationTTY.contents(ofTTY:))
-            JuliaLog.note("asking: “\(entry.title.prefix(50))” tty=\(tty ?? "unresolved") screen=\(contents.map { "\($0.count) chars" } ?? "none") tabs=\(tabs?.count ?? 0) isTab=\(entry.isTab) key=\(entry.windowKey ?? "nil")")
-            return (tty, contents)
+            screens[entry.id] ?? (tty: nil, contents: nil)
         }
         pendingReports = reports
-        if !projectTitles.isEmpty {
-            let raw = JuliaWorkspace.manifest(names: projectNames, order: projectTitles, entries: all)
+        if let raw = rawManifest {
             let now = Date()
             let current = firstSeen.stamp(raw.mapValues { latch.apply($0, now: now) }, now: now)
             let changed = JuliaWorkspace.changes(previous: workspace, current: current)
