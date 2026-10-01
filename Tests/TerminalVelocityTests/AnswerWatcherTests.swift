@@ -144,6 +144,14 @@ final class AttentionPromptTests: XCTestCase {
         let cc = AttentionPrompt.yesKeys(screen: "Do you want to proceed?\n❯ 1. Yes\n  2. No", harness: "claude")
         XCTAssertEqual(cc.text, ""); XCTAssertEqual(cc.enter, true)
         XCTAssertEqual(AttentionPrompt.gateLine("Bash command\nnpx foo\nDo you want to proceed?\n❯ 1. Yes"), "❯ 1. Yes")
+        // PENDING vs false alarm: the "[ ! ] Action Required" title also fires on a finished turn
+        // and on a progress note. Only a real dialog is pending — otherwise no Yes button.
+        XCTAssertTrue(AttentionPrompt.pending("Do you want to proceed?\n❯ 1. Yes\n  2. No"))
+        XCTAssertTrue(AttentionPrompt.pending("› 1. Yes, proceed (y)\nPress enter to confirm or esc to cancel"))
+        XCTAssertTrue(AttentionPrompt.pending("Overwrite this file? (y/n)"))
+        XCTAssertTrue(AttentionPrompt.pending("Claude wants to run a command\nDo you want to allow it?"))
+        XCTAssertFalse(AttentionPrompt.pending("Read 1 file\n● That \"needs input\" flag was a false alarm. The message it showed was only a progress note while work continued, not a question."), "a progress note is not a question")
+        XCTAssertFalse(AttentionPrompt.pending("Running the test suite…\n✓ 42 passed, 0 failed"), "a finished turn is not a question")
     }
     func testAnEmptyOrDecorativeScreenIsNoQuestion() {
         XCTAssertNil(AttentionPrompt.extract("────────\n\n────────"))

@@ -57,6 +57,25 @@ enum AttentionPrompt {
         if s.range(of: #"\[y/n\]|\by/n\b|yes/no|\(y\)"#, options: .regularExpression) != nil { return ("y", false) }
         return ("", true)
     }
+    /// Is the tab ACTUALLY waiting on a keypress? The "[ ! ] Action Required" title marker also
+    /// lights up when a harness FINISHES a turn and sits idle, and on a plain progress note —
+    /// neither is a question ("i keep getting false alarms on need input… that needs-input flag
+    /// was a false alarm, only a progress note while work continued, not a question"). A real
+    /// approval/choice dialog shows a highlighted option, an "enter to confirm", a y/n prompt,
+    /// or a direct "do you want / would you like / allow / wants to" ask. Without any of those
+    /// there is nothing to say Yes to — report no prompt, and the ribbon drops the Yes button.
+    /// Run this on the EXTRACTED tail, not the raw buffer, so a stale answered dialog scrolled
+    /// up the screen cannot re-arm it.
+    static func pending(_ question: String) -> Bool {
+        let s = question.lowercased()
+        if s.contains("press enter") || s.contains("enter to confirm") { return true }
+        if s.range(of: #"[❯›▶]\s*\d[.)]"#, options: .regularExpression) != nil { return true }
+        if s.range(of: #"\[y/n\]|\by/n\b|yes/no|\(y\)"#, options: .regularExpression) != nil { return true }
+        if s.range(of: #"(?:^|\n)\s*(?:do you want|would you like|allow |approve\b|permission\b)"#, options: .regularExpression) != nil { return true }
+        if s.contains(" wants to ") || s.contains("shall i ") { return true }
+        return false
+    }
+
     /// The line whose disappearance proves the dialog was answered — the choice prompt itself.
     static func gateLine(_ question: String) -> String? {
         question.components(separatedBy: "\n").last { l in
