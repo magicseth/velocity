@@ -59,6 +59,10 @@ struct SearchResults {
     var liveMatchingActive = false
     /// Projects Julia knows (empty until signed in) — option-space searches them too.
     var juliaProjects: [JuliaProjectRow] = [] { didSet { if juliaProjects != oldValue { filter(preserveSelection: true) } } }
+    /// Projects he has SWITCHED TO this session, title → last visit, so the default (empty-query)
+    /// view can lead with the few he toggles between.
+    var projectVisits: [String: Date] = [:]
+    func visitProject(_ title: String) { projectVisits[title] = Date() }
     let liveMatcher = LiveWindowMatcher()
     @Published var liveMatchStatus: String?
     var searchingLive: Bool { liveMatchStatus == "Waiting to search…" || liveMatchStatus == "AI matching…" }
@@ -69,7 +73,10 @@ struct SearchResults {
             liveMatchIDs = []; filter(preserveSelection: true); scheduleLiveMatching()
         }
     }
-    @Published var query = "" { didSet { if query != oldValue { liveMatchIDs = []; filter(); scheduleLiveMatching() } } }
+    /// When he last typed in the palette — the periodic window rescan pauses while he is typing
+    /// (the list is already populated; rescanning mid-type only churns the main thread).
+    var lastTyped = Date.distantPast
+    @Published var query = "" { didSet { if query != oldValue { lastTyped = Date(); liveMatchIDs = []; filter(); scheduleLiveMatching() } } }
     @Published private(set) var resultState = SearchResults()
     var results: [WindowEntry] { resultState.entries }
     var selected: Int { results.firstIndex { $0.id == resultState.selectedID } ?? -1 }
@@ -149,14 +156,29 @@ struct SearchResults {
             })
         }
     }
+    /// A window scan rewrites `all` once PER APP (removeAll + append = two didSet fires each).
+    /// Each fire reconciled liveMatchIDs and rebuilt the live-match request — iterating every
+    /// window with dedup + metadata — so a scan over N apps ran that ~2N times on the main
+    /// thread, every 8 s while the palette is open, stalling keystrokes for seconds. The scan
+    /// sets this for its whole burst; the one reconcile + one scheduleLiveMatching runs at the
+    /// end (bulkScanDidEnd). Keystrokes (query.didSet) and the display filter are untouched.
+    var suppressLiveMatch = false
     var all: [WindowEntry] = [] {
         didSet {
+            guard !suppressLiveMatch else { return }
             liveMatchIDs.removeAll { id in
                 guard let before = oldValue.first(where: { $0.id == id }), let after = all.first(where: { $0.id == id }) else { return true }
                 return before.title != after.title || before.appName != after.appName
             }
             scheduleLiveMatching()
         }
+    }
+    /// Close a bulk scan: reconcile the live-match ids against what is open now, then schedule
+    /// one live match. Call once, on the main thread, after the scan has written `all`.
+    func bulkScanDidEnd() {
+        suppressLiveMatch = false
+        liveMatchIDs.removeAll { id in !all.contains(where: { $0.id == id }) }
+        scheduleLiveMatching()
     }
     var choose: (() -> Void)?
     var chooseEntry: ((WindowEntry) -> Void)?
@@ -203,15 +225,29 @@ struct SearchResults {
         nextResults = ResultDeduplication.apply(nextResults)
         // PROJECTS (option-space searches them too, once signed in): the ones whose name or an
         // alias matches, best first, ahead of the windows — Enter brings the project forward.
-        if !parsed.text.isEmpty, !juliaProjects.isEmpty {
-            let projectRows: [WindowEntry] = juliaProjects.compactMap { (pr: JuliaProjectRow) -> (Int, WindowEntry)? in
-                guard let best = pr.matchNames.compactMap({ WindowSearch.score(query: parsed.text, title: $0, app: "Project") }).max() else { return nil }
-                var e = WindowEntry(id: "project:" + pr.id, pid: 0, appName: "Project", title: pr.title,
-                    icon: NSImage(systemSymbolName: "square.stack.3d.up.fill", accessibilityDescription: "Project"),
-                    element: nil, minimized: false, hidden: false, terminal: false)
-                e.project = pr
-                return (best, e)
-            }.sorted { ($0 as (Int, WindowEntry)).0 > ($1 as (Int, WindowEntry)).0 }.map { $0.1 }
+        func projectRow(_ pr: JuliaProjectRow) -> WindowEntry {
+            var e = WindowEntry(id: "project:" + pr.id, pid: 0, appName: "Project", title: pr.title,
+                icon: NSImage(systemSymbolName: "square.stack.3d.up.fill", accessibilityDescription: "Project"),
+                element: nil, minimized: false, hidden: false, terminal: false)
+            e.project = pr
+            return e
+        }
+        if !juliaProjects.isEmpty {
+            let projectRows: [WindowEntry]
+            if !parsed.text.isEmpty {
+                // Named/aliased matches, best first — Enter brings the project forward.
+                projectRows = juliaProjects.compactMap { (pr: JuliaProjectRow) -> (Int, WindowEntry)? in
+                    guard let best = pr.matchNames.compactMap({ WindowSearch.score(query: parsed.text, title: $0, app: "Project") }).max() else { return nil }
+                    return (best, projectRow(pr))
+                }.sorted { ($0 as (Int, WindowEntry)).0 > ($1 as (Int, WindowEntry)).0 }.map { $0.1 }
+            } else {
+                // DEFAULT VIEW: the few projects he toggles between, most-recently-visited first,
+                // ahead of the recent windows ("default to recent things AND recent projects i've
+                // switched to — i really just toggle back and forth between a few").
+                projectRows = juliaProjects.compactMap { (pr: JuliaProjectRow) -> (Date, WindowEntry)? in
+                    projectVisits[pr.title].map { ($0, projectRow(pr)) }
+                }.sorted { $0.0 > $1.0 }.prefix(5).map { $0.1 }
+            }
             nextResults = projectRows + nextResults
         }
         // Publish rows and selection together. A vanished selection must not silently

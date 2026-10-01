@@ -16,9 +16,18 @@ import SwiftUI
     var projects: () -> [JuliaProjectRow] = { [] }
     var onAssign: (_ sig: String, _ projectId: String) -> Void = { _, _ in }
     var onCreate: (_ sig: String, _ title: String) -> Void = { _, _ in }
+    /// Double-click the blue tag → bring ALL of that project's windows forward.
+    var onShowAll: (_ project: String) -> Void = { _ in }
+    private var currentProject: String?
 
     init() {
         chip.onClick = { [weak self] in self?.togglePicker() }
+        // Double-click the blue tag shows every window of its project ("when i double click the
+        // blue project tag on a window, all of its windows should show up").
+        chip.onDoubleClick = { [weak self] in
+            guard let self, let p = self.currentProject else { return }
+            self.closePicker(); self.onShowAll(p)
+        }
     }
 
     /// Show/refresh the chip above `windowID`. `project` nil → the tag affordance.
@@ -31,6 +40,7 @@ import SwiftUI
             else { project = o.title }
         }
         chip.render(project: project)
+        currentProject = project
         let size = chip.frame.size
         let origin = NSPoint(x: (f.midX - size.width / 2).rounded(), y: (f.maxY - size.height + 15).rounded())
         // IDEMPOTENT — do not re-order/re-place an unchanged chip every 0.6s tick (that churn
@@ -111,7 +121,8 @@ import SwiftUI
             let w = label.fittingSize.width + 22
             setContentSize(NSSize(width: w, height: 26)); bg.frame = NSRect(x: 0, y: 0, width: w, height: 26)
         }
-        override func mouseDown(with event: NSEvent) { onClick() }
+        var onDoubleClick: () -> Void = {}
+        override func mouseDown(with event: NSEvent) { if event.clickCount >= 2 { onDoubleClick() } else { onClick() } }
     }
     final class KeyPanel: NSPanel {
         override var canBecomeKey: Bool { true }

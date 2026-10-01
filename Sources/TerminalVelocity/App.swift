@@ -111,6 +111,7 @@ final class SearchPanel: NSPanel {
         activeChip.projects = { [weak self] in self?.julia.projectRows ?? [] }
         activeChip.onAssign = { [weak self] sig, id in self?.julia.place(sig: sig, projectId: id) }
         activeChip.onCreate = { [weak self] sig, title in self?.julia.createAndPlace(sig: sig, title: title) }
+        activeChip.onShowAll = { [weak self] title in self?.foregroundProject(title: title) }
         julia.notice = { [weak self] text in self?.model.message = text }
         julia.allEntries = { [weak self] in self?.model.all ?? [] }
         julia.foreground = { [weak self] entries, lead in await self?.focusGroup(entries, selected: lead) ?? false }
@@ -253,6 +254,7 @@ final class SearchPanel: NSPanel {
                 // A round took 2.5 s and the next began at once: the palette was indexing
                 // for as long as it was open. Let a finished round age before the next.
                 if self.scanning || Date().timeIntervalSince(self.lastCatalogRefresh) < 8 { return }
+                if Date().timeIntervalSince(self.model.lastTyped) < 1.0 { return }   // don't rescan mid-keystroke
                 self.refresh()
             }
         }
@@ -275,7 +277,16 @@ final class SearchPanel: NSPanel {
         // tracker was blocking it). A light timer catches within-app window/tab switches that
         // send no activation notification.
         chipTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refreshActiveChip() }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                // While the picker is open the user is TYPING a project name. refreshActiveChip
+                // runs focusedEntry (a synchronous AX traversal) on the main thread; polling it
+                // every 0.6 s stalls keystroke delivery ("typing is painfully slow, mainthread
+                // blocking?"). The picker is nonactivating, so the terminal stays frontmost and
+                // a real window switch still fires the activation observer, which dismisses it.
+                guard !self.activeChip.pickerOpen else { return }
+                self.refreshActiveChip()
+            }
         }
         activityTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.trackActivity() }
@@ -358,6 +369,7 @@ final class SearchPanel: NSPanel {
         }
         let sig = JuliaWorkspace.signature(entry)
         let project = julia.project(forSig: sig)
+        if let project { model.visitProject(project) }   // recency for the palette default view
         JuliaLog.note("chip → \(entry.appName) project=\(project ?? "tag")")
         activeChip.show(windowID: wid, sig: sig, project: project)
         lastChipWindow = wid
@@ -719,6 +731,7 @@ final class SearchPanel: NSPanel {
         guard !scanning else { return }
         lastCatalogRefresh = Date()
         scanning = true
+        model.suppressLiveMatch = true   // one live-match at the end of the burst, not ~2 per app
         model.loading = true
         let pid = previousApp?.processIdentifier
         let browserTabsEnabled = model.browserTabsEnabled
@@ -790,6 +803,7 @@ final class SearchPanel: NSPanel {
                 self.model.loading = self.scanningTerminals
                 self.model.scanningApp = self.scanningTerminals ? "terminals" : nil
                 self.scanning = false
+                self.model.bulkScanDidEnd()   // the ONE live-match + id reconcile for this whole scan
             }
         }
     }
@@ -837,6 +851,20 @@ final class SearchPanel: NSPanel {
             try? await Task.sleep(for: .milliseconds(250))
             refresh()
         }
+    }
+
+    /// Bring EVERY window of a project forward (the chip's double-click; same resolution the
+    /// palette's project row uses): name-matched windows plus any he placed here by signature.
+    @MainActor func foregroundProject(title: String) {
+        let row = julia.projectRows.first { $0.title == title }
+        var members = JuliaWorkspace.group(for: title, names: row?.matchNames ?? [title], in: model.all)?.entries ?? []
+        for w in model.all where !members.contains(where: { $0.id == w.id }) && julia.project(forSig: JuliaWorkspace.signature(w)) == title {
+            members.append(w)
+        }
+        guard let lead = members.first(where: \.terminal) ?? members.first else {
+            model.message = "No windows open for \(title)."; return
+        }
+        Task { _ = await focusGroup(members, selected: lead) }
     }
 
     func choose() {
