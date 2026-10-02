@@ -710,7 +710,7 @@ enum JuliaKeychain {
             } catch {
                 // The next scan re-reports whatever still differs; the board's
                 // 24h budget sweeps anything this Mac never manages to resolve.
-                reporter = JuliaReporter(latch: reporter.latch)
+                                reporter = JuliaReporter(latch: reporter.latch)
                 workspace = [:]
                 notice?(error.localizedDescription)
             }
@@ -893,8 +893,21 @@ enum JuliaKeychain {
             var entry: WindowEntry?
             let tty = JuliaJumpHandle.decode(JuliaWorkspace.query(in: url, "handle") ?? "")?.tty ?? JuliaWorkspace.query(in: url, "tty")
             if let tty, let target = ConversationTTY.target(onTTY: tty) {
-                // THE TAB ITSELF, wherever it is: Terminal selects it, Velocity brings Terminal
-                // forward, the words go in. No folder guess, no catalog, no title.
+                // INTO THE TAB'S TTY, in the BACKGROUND — do script delivers the words to the
+                // foreground program's stdin and presses Return, with no foregrounding and no
+                // key-window race. The CGEvent keystroke path below dropped keys when the
+                // terminal was front-but-not-key and still reported keys-posted ("i dictated
+                // through velocity but it didn't land"). Same mechanism as a Yes from the ribbon.
+                // (`do script` always ends with Return, so it is the submit path — enter only.)
+                if enter {
+                    JuliaLog.note("type → inject into tty \(tty) “\(target.entry.title.prefix(60))”")
+                    if JuliaHands.injectToTab(tty: tty, text: text) {
+                        JuliaLog.note("typed \(text.count) chars + Enter into tty \(tty) (injected)")
+                        return await Self.typedReceipt(text: text, enter: true, into: tty)
+                    }
+                    JuliaLog.note("injectToTab failed for tty \(tty) — falling back to keystrokes")
+                }
+                // enter == false, or injection did not land: raise the exact tab and post keys.
                 JuliaLog.note("type → tty \(tty) “\(target.entry.title.prefix(60))”")
                 let ok = await JuliaHands.type(text, enter: enter, into: target.entry) { [weak self] in
                     guard let wid = target.select() else { return false }
