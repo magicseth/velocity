@@ -584,6 +584,9 @@ final class SearchPanel: NSPanel {
                 // the floating palette before hit-testing the destination sidebar.
                 panel.orderOut(nil)
                 selectedTab = Conversations.select(conversation, window: window)
+            } else if let notionTab = entry.notionTab, let window = entry.element {
+                panel.orderOut(nil)
+                selectedTab = NotionTabs.select(notionTab, window: window)
             } else if let project = entry.chatProject, let window = entry.element {
                 if project.mode == "Workspace" {
                     selectedTab = ConductorWorkspaces.select(project, window: window)

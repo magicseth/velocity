@@ -22,6 +22,7 @@ struct WindowEntry: Identifiable, @unchecked Sendable {
     var browserProfileIcon: NSImage? = nil
     var chatProject: ChatProject? = nil
     var conversation: ConversationDestination? = nil
+    var notionTab: NotionTab? = nil
     // A destination can represent its owning window even when their labels differ.
     var representedWindowTitle: String? = nil
     var browserPinned = false
@@ -96,6 +97,7 @@ struct WindowEntry: Identifiable, @unchecked Sendable {
             let age = WindowEntry.relativeFormatter.localizedString(for: closedTab.closed, relativeTo: Date())
             return [appName, "Recently closed " + age, browserProfile, URL(string: closedTab.url)?.host].compactMap { $0 }.joined(separator: " · ")
         }
+        if notionTab != nil { return appName + " · Tab" }
         if let conversation { return appName + (conversation.appID == Conversations.slackID ? " · Channel / DM" : " · Conversation") }
         if let chatProject { return appName + (chatProject.mode == "Workspace" ? " · Workspace" : " · Project · " + chatProject.mode) }
         if launchURL != nil { return "Launch app" }

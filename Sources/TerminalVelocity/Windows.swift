@@ -232,6 +232,7 @@ enum WindowCatalog {
                 appEntries.append(contentsOf: ChatProjects.scan(window: window, app: app))
                 appEntries.append(contentsOf: ConductorWorkspaces.scan(window: window, app: app))
                 appEntries.append(contentsOf: Conversations.scan(window: window, app: app))
+                appEntries.append(contentsOf: NotionTabs.scan(window: window, app: app))
                 // A tab's audio badge costs an AX read per tab (288 Chrome tabs ≈ 0.6 s a
                 // round); only an app that is producing sound can have a playing tab.
                 let playing = audioPIDs.contains(pid)
