@@ -166,3 +166,33 @@ final class SteadyTitleTests: XCTestCase {
         XCTAssertEqual(ConversationTTY.steady("convexos — ◐ task — node ◂ claude"), "convexos — task — node ◂ claude")
     }
 }
+
+final class RealAskTests: XCTestCase {
+    func testUnreadableScreenTrustsTitle() {
+        XCTAssertTrue(JuliaReporter.isRealAsk(contents: nil))
+        XCTAssertTrue(JuliaReporter.isRealAsk(contents: "   "))
+    }
+    func testCodexApprovalDialogIsReal() {
+        let screen = """
+        • Running tests
+        Would you like to run the following command?
+          $ npm run ship
+        › 1. Yes, proceed (y)
+          2. No, and tell Codex what to do differently (esc)
+        Press enter to confirm or esc to cancel
+        """
+        XCTAssertTrue(JuliaReporter.isRealAsk(contents: screen))
+    }
+    func testCodexFinishedTurnIsNotAnAsk() {
+        let screen = """
+        • Built the spine: auth, ai door, verify scripts. All 12 verifiers pass.
+          Next: WS1 can start against docs/CONTRACTS.md.
+
+        ─ Worked for 4m 12s ─────────────────────────────
+
+        › Ask Codex to do anything
+          100% context left · ? for shortcuts
+        """
+        XCTAssertFalse(JuliaReporter.isRealAsk(contents: screen))
+    }
+}

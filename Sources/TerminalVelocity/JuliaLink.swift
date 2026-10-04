@@ -71,9 +71,15 @@ struct JuliaReporter: Equatable {
     /// `screen`: for a waiting tab, its tty and what is on it (nil in tests and when
     /// Terminal cannot be asked). The tty rides in the handle; the question rides beside it.
     @MainActor static func reports(_ entries: [WindowEntry], launch: (pid_t) -> Date?, screen: ((WindowEntry) -> (tty: String?, contents: String?))? = nil) -> [JuliaReport] {
-        AttentionNotifications.waiting(entries).map { key, entry in
+        AttentionNotifications.waiting(entries).compactMap { key, entry -> JuliaReport? in
             let presentation = AttentionPresentation(entry)
             let seen = screen?(entry)
+            // THE SCREEN DECIDES WHEN WE CAN READ IT. Codex titles every idle session "Action
+            // Required" — a turn that simply finished, not only an approval dialog — so eight
+            // Codex windows read as eight things waiting on him when one was ("we're counting
+            // codex asking … in MULTIPLE terminals at once (but it is really just one)"). A
+            // finished turn is the exchange watcher's "answer ready", not a needs-you.
+            if !Self.isRealAsk(contents: seen?.contents) { return nil }
             let handle = launch(entry.pid)
                 .flatMap { AttentionDestination(entry: entry, launch: $0, tty: seen?.tty) }
                 .flatMap(JuliaJumpHandle.encode)
@@ -81,6 +87,14 @@ struct JuliaReporter: Equatable {
                 subtask: presentation.task, jumpHandle: handle,
                 prompt: seen?.contents.flatMap { AttentionPrompt.extract($0) }.flatMap { AttentionPrompt.pending($0) ? $0 : nil }, harness: AttentionPrompt.harness(title: entry.title))
         }.sorted { $0.externalId < $1.externalId }
+    }
+
+    /// Is a title-flagged "Action Required" a real ask? Unreadable screen: trust the title (the
+    /// only evidence). Readable: only if what's on it is still pending a decision.
+    nonisolated static func isRealAsk(contents: String?) -> Bool {
+        guard let contents, !contents.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return true }
+        guard let tail = AttentionPrompt.extract(contents) else { return false }
+        return AttentionPrompt.pending(tail)
     }
 
     mutating func observe(_ reports: [JuliaReport], now: Date = Date()) -> JuliaReportDiff {

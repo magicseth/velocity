@@ -113,13 +113,16 @@ enum ConversationTTY {
     /// its window is the group whose selected tab's title is the window's name, its
     /// position in that group is the script's tab index.
     static func tty(of entry: WindowEntry, in entries: [WindowEntry], tabs: [Tab]? = nil) -> String? {
-        guard entry.isTab, let element = entry.element, let wid = WindowRaise.windowID(of: element) else { return nil }
+        guard let element = entry.element, let wid = WindowRaise.windowID(of: element) else { return nil }
         let all = tabs ?? terminalTabs()
         // THE WINDOW BY ITS SERVER ID, not by the catalog's key (two windows once hashed alike)
         // and not by name (which blinks). Its tabs, in the tab bar's order, are the catalog
         // entries whose window element is this window; the entry's position is the tab.
         let wtabs = all.filter { $0.windowID == wid }
         guard !wtabs.isEmpty else { return nil }
+        // A WINDOW ENTRY (not a tab) shows its selected tab — the title it carries is that tab's.
+        // Unreadable before, so every Codex window's "Action Required" title went unchecked.
+        if !entry.isTab { return wtabs.first(where: \.selected)?.tty ?? (wtabs.count == 1 ? wtabs[0].tty : nil) }
         // One tab in the window: that is it (the catalog lists a one-tab window twice — as
         // the window and as its tab — so a position would be off by one).
         if wtabs.count == 1 { return wtabs[0].tty }
