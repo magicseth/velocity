@@ -1,0 +1,254 @@
+{
+  "date": "2026-09-19T23:32:53.542Z",
+  "windows": 409,
+  "samples": 27,
+  "correct": 27,
+  "medianMs": 525,
+  "p95Ms": 640,
+  "note": "Production Jev per-candidate relevance matcher; synthetic fixtures only.",
+  "results": [
+    {
+      "case": "exact",
+      "trial": 0,
+      "correct": true,
+      "ids": [
+        "2"
+      ],
+      "latencyMs": 735
+    },
+    {
+      "case": "paraphrase",
+      "trial": 0,
+      "correct": true,
+      "ids": [
+        "1"
+      ],
+      "latencyMs": 532
+    },
+    {
+      "case": "typo",
+      "trial": 0,
+      "correct": true,
+      "ids": [
+        "2",
+        "1"
+      ],
+      "latencyMs": 550
+    },
+    {
+      "case": "app distinction",
+      "trial": 0,
+      "correct": true,
+      "ids": [
+        "3"
+      ],
+      "latencyMs": 539
+    },
+    {
+      "case": "profile",
+      "trial": 0,
+      "correct": true,
+      "ids": [
+        "4"
+      ],
+      "latencyMs": 504
+    },
+    {
+      "case": "ambiguity",
+      "trial": 0,
+      "correct": true,
+      "ids": [
+        "4",
+        "5"
+      ],
+      "latencyMs": 640
+    },
+    {
+      "case": "no match",
+      "trial": 0,
+      "correct": true,
+      "ids": [],
+      "latencyMs": 547
+    },
+    {
+      "case": "conversation",
+      "trial": 0,
+      "correct": true,
+      "ids": [
+        "7"
+      ],
+      "latencyMs": 525
+    },
+    {
+      "case": "workspace",
+      "trial": 0,
+      "correct": true,
+      "ids": [
+        "6"
+      ],
+      "latencyMs": 511
+    },
+    {
+      "case": "exact",
+      "trial": 1,
+      "correct": true,
+      "ids": [
+        "2"
+      ],
+      "latencyMs": 500
+    },
+    {
+      "case": "paraphrase",
+      "trial": 1,
+      "correct": true,
+      "ids": [
+        "1"
+      ],
+      "latencyMs": 500
+    },
+    {
+      "case": "typo",
+      "trial": 1,
+      "correct": true,
+      "ids": [
+        "2",
+        "1"
+      ],
+      "latencyMs": 503
+    },
+    {
+      "case": "app distinction",
+      "trial": 1,
+      "correct": true,
+      "ids": [
+        "3"
+      ],
+      "latencyMs": 564
+    },
+    {
+      "case": "profile",
+      "trial": 1,
+      "correct": true,
+      "ids": [
+        "4"
+      ],
+      "latencyMs": 461
+    },
+    {
+      "case": "ambiguity",
+      "trial": 1,
+      "correct": true,
+      "ids": [
+        "5",
+        "4"
+      ],
+      "latencyMs": 602
+    },
+    {
+      "case": "no match",
+      "trial": 1,
+      "correct": true,
+      "ids": [],
+      "latencyMs": 625
+    },
+    {
+      "case": "conversation",
+      "trial": 1,
+      "correct": true,
+      "ids": [
+        "7"
+      ],
+      "latencyMs": 525
+    },
+    {
+      "case": "workspace",
+      "trial": 1,
+      "correct": true,
+      "ids": [
+        "6"
+      ],
+      "latencyMs": 580
+    },
+    {
+      "case": "exact",
+      "trial": 2,
+      "correct": true,
+      "ids": [
+        "2"
+      ],
+      "latencyMs": 511
+    },
+    {
+      "case": "paraphrase",
+      "trial": 2,
+      "correct": true,
+      "ids": [
+        "1"
+      ],
+      "latencyMs": 477
+    },
+    {
+      "case": "typo",
+      "trial": 2,
+      "correct": true,
+      "ids": [
+        "2",
+        "1"
+      ],
+      "latencyMs": 584
+    },
+    {
+      "case": "app distinction",
+      "trial": 2,
+      "correct": true,
+      "ids": [
+        "3"
+      ],
+      "latencyMs": 469
+    },
+    {
+      "case": "profile",
+      "trial": 2,
+      "correct": true,
+      "ids": [
+        "4"
+      ],
+      "latencyMs": 564
+    },
+    {
+      "case": "ambiguity",
+      "trial": 2,
+      "correct": true,
+      "ids": [
+        "4",
+        "5"
+      ],
+      "latencyMs": 445
+    },
+    {
+      "case": "no match",
+      "trial": 2,
+      "correct": true,
+      "ids": [],
+      "latencyMs": 476
+    },
+    {
+      "case": "conversation",
+      "trial": 2,
+      "correct": true,
+      "ids": [
+        "7"
+      ],
+      "latencyMs": 487
+    },
+    {
+      "case": "workspace",
+      "trial": 2,
+      "correct": true,
+      "ids": [
+        "6"
+      ],
+      "latencyMs": 487
+    }
+  ]
+}

@@ -19,10 +19,8 @@ const textPlanner = new Agent(components.agent, {
   name: "Local request planner",
   languageModel: convexGateway("anthropic/claude-sonnet-4.5"), instructions: textInstructions,
 });
-import { matchRequest, matchOutput, matchInstructions, validateMatches } from "../lib/matching";
-const windowMatcher = new Agent(components.agent, {
-  name: "Window matcher", languageModel: convexGateway("google/gemini-2.5-flash-lite"), instructions: matchInstructions,
-});
+import { matchRequest } from "../lib/matching";
+import { matchWithJev } from "../lib/jev";
 const router = httpRouter();
 const classifier = new Agent(components.agent, {
   name: "Desktop objective classifier",
@@ -160,12 +158,8 @@ router.route({ path: "/match-windows", method: "POST", handler: httpAction(async
   } catch { return json({ error: "Invalid search metadata." }, 400); }
   const started = Date.now();
   try {
-    const result = await windowMatcher.generateText(ctx, { userId: "desktop-owner" }, {
-      tools: { matches: tool({ description: "Return ranked matching window IDs.", inputSchema: matchOutput }) },
-      toolChoice: { type: "tool", toolName: "matches" }, prompt: JSON.stringify(input),
-      maxOutputTokens: 300, abortSignal: AbortSignal.timeout(10000),
-    }, { storageOptions: { saveMessages: "none" } });
-    return json({ ...validateMatches(input, result.toolCalls.find(call => call.toolName === "matches")?.input), elapsedMs: Date.now() - started });
+    const result = await matchWithJev(input, process.env.TYPESAFE_API_KEY ?? "");
+    return json({ ...result, model: "jev-latest", elapsedMs: Date.now() - started });
   } catch { return json({ error: "AI matching is unavailable; local search still works." }, 502); }
 }) });
 export default router;
