@@ -221,3 +221,24 @@ final class CodexMirrorTests: XCTestCase {
         XCTAssertEqual(out.map(\.externalId), ["b", "d"])
     }
 }
+
+final class UnfiledChunkTests: XCTestCase {
+    func w(_ i: Int) -> JuliaWindow { JuliaWindow(key: "k\(i)", kind: "browser", app: "Chrome", title: "t\(i)", state: nil, task: nil, sig: nil) }
+    func testNothingDroppedAndStable() {
+        let windows = (0..<251).map(w)
+        let chunks = JuliaWorkspace.unfiledChunks(windows)
+        XCTAssertEqual(chunks.count, 4)
+        XCTAssertEqual(chunks.first?.0, "*")
+        XCTAssertEqual(chunks.reduce(0) { $0 + $1.1.count }, 251, "every unfiled window is sent")
+        XCTAssertTrue(chunks.allSatisfy { JuliaWorkspace.isUnfiled($0.0) })
+        // The same window stays in the same chunk when another window changes.
+        var changed = windows; changed[7] = JuliaWindow(key: "k7", kind: "browser", app: "Chrome", title: "renamed", state: nil, task: nil, sig: nil)
+        let again = JuliaWorkspace.unfiledChunks(changed)
+        let home = { (cs: [(String, [JuliaWindow])], key: String) in cs.first { $0.1.contains { $0.key == key } }?.0 }
+        XCTAssertEqual(home(chunks, "k100"), home(again, "k100"))
+    }
+    func testSmallSetIsOneBucket() {
+        XCTAssertEqual(JuliaWorkspace.unfiledChunks((0..<40).map(w)).map(\.0), ["*"])
+        XCTAssertEqual(JuliaWorkspace.unfiledChunks([]).map(\.0), ["*"])
+    }
+}

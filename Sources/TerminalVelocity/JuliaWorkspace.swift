@@ -132,6 +132,11 @@ enum JuliaWorkspace {
     }
     /// The windows that belong to a project, one per window/tab, terminals first.
     static func windows(for project: String, in entries: [WindowEntry]) -> [JuliaWindow] { windows(named: [project], in: entries) }
+    /// The prefrontal/1 bounds (packages/prefrontal-contract): 150 windows a bucket, 48 buckets a
+    /// machine. Was 40 / 12 — a full "*" bucket silently hid every window past the 40th, and
+    /// projects past the 12th vanished.
+    static let maxWindowsPerBucket = 150
+    static let maxBuckets = 48
     static func windows(named names: [String], in entries: [WindowEntry]) -> [JuliaWindow] {
         var seen: Set<String> = []
         var out: [JuliaWindow] = []
@@ -140,7 +145,9 @@ enum JuliaWorkspace {
             out.append(JuliaWindow(key: entry.id, kind: kind(entry), app: entry.appName, title: String(entry.title.prefix(140)), state: state(entry), task: entry.agentTaskTitle.map { String($0.prefix(160)) }, sig: signature(entry)))
         }
         let order = ["terminal": 0, "chat": 1, "document": 2, "browser": 3, "window": 4]
-        return Array(out.sorted { (order[$0.kind] ?? 9, $0.title) < (order[$1.kind] ?? 9, $1.title) }.prefix(40))
+        let sorted = out.sorted { (order[$0.kind] ?? 9, $0.title) < (order[$1.kind] ?? 9, $1.title) }
+        if sorted.count > JuliaWorkspace.maxWindowsPerBucket { JuliaLog.note("manifest: \(sorted.count) windows for \(names.first ?? "?"), sending \(JuliaWorkspace.maxWindowsPerBucket)") }
+        return Array(sorted.prefix(JuliaWorkspace.maxWindowsPerBucket))
     }
     /// Per project, what belongs to it by name — plus a "*" bucket of the
     /// terminals, tabs, chats and documents that matched NO project, so Julia
@@ -198,8 +205,34 @@ enum JuliaWorkspace {
         // Terminals first: they are where his agents are. (Forty chat windows once filled
         // the bucket and every unsorted terminal fell off the end.)
         let rank = ["terminal": 0, "document": 1, "browser": 2, "chat": 3]
-        out["*"] = Array(loose.sorted { (rank[$0.kind] ?? 9) < (rank[$1.kind] ?? 9) }.prefix(40))
+        let looseSorted = loose.sorted { (rank[$0.kind] ?? 9) < (rank[$1.kind] ?? 9) }
+        // UNFILED, IN STABLE CHUNKS — never truncated. 251 unfiled windows (mostly tabs) once
+        // overflowed a single 40-window "*" bucket and silently hid the rest. Each window lands in
+        // the same chunk by a hash of its key, so one tab's title change resends ~100 windows, not
+        // all of them. "*" is always present; more chunks are "*2", "*3"… (see isUnfiled).
+        for (name, chunk) in unfiledChunks(looseSorted) { out[name] = chunk }
         return out
+    }
+
+    /// Is this bucket name unfiled windows ("*", "*2", …)?
+    static func isUnfiled(_ bucket: String) -> Bool { bucket.hasPrefix("*") }
+
+    /// Split unfiled windows into hash-stable chunks of ~100 (a power of two of them, ≤ 16).
+    static func unfiledChunks(_ windows: [JuliaWindow]) -> [(String, [JuliaWindow])] {
+        var n = 1
+        while n < 16, windows.count > n * 100 { n *= 2 }
+        var chunks = Array(repeating: [JuliaWindow](), count: n)
+        for w in windows { chunks[Int(fnv1a(w.key) % UInt64(n))].append(w) }
+        return chunks.enumerated().map { i, c in
+            if c.count > maxWindowsPerBucket { JuliaLog.note("manifest: unfiled chunk \(i + 1) has \(c.count) windows, sending \(maxWindowsPerBucket)") }
+            return (i == 0 ? "*" : "*\(i + 1)", Array(c.prefix(maxWindowsPerBucket)))
+        }
+    }
+
+    static func fnv1a(_ s: String) -> UInt64 {
+        var h: UInt64 = 0xcbf29ce484222325
+        for b in s.utf8 { h ^= UInt64(b); h = h &* 0x100000001b3 }
+        return h
     }
     /// Which projects the board must hear about: changed lists, and lists that
     /// went empty (so the row is forgotten).

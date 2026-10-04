@@ -642,7 +642,7 @@ enum JuliaKeychain {
         let byKey = Dictionary(entries.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         var live: [String: String] = [:]
         var bySig: [String: String] = [:]
-        for (project, windows) in manifest where project != "*" {
+        for (project, windows) in manifest where !JuliaWorkspace.isUnfiled(project) {
             for w in windows { live[w.key] = project; if let s = w.sig { bySig[s] = project } }
         }
         projectBySig = bySig
@@ -795,14 +795,16 @@ enum JuliaKeychain {
     }
     /// prefrontal/1 WindowsReport.buckets: non-empty project buckets in his order, `*`
     /// always, at most MAX_BUCKETS_PER_MACHINE (12) — the component's read budget.
-    static func observation(_ manifest: [String: [JuliaWindow]], order: [String] = [], limit: Int = 12) -> [[String: Any]] {
-        let ordered = order + manifest.keys.filter { $0 != "*" && !order.contains($0) }.sorted()
+    static func observation(_ manifest: [String: [JuliaWindow]], order: [String] = [], limit: Int = JuliaWorkspace.maxBuckets) -> [[String: Any]] {
+        let ordered = (order + manifest.keys.filter { !order.contains($0) }.sorted()).filter { !JuliaWorkspace.isUnfiled($0) }
+        // Unfiled chunks always go ("*" even when empty, so the component clears it); projects fill the rest.
+        let unfiled = (["*"] + manifest.keys.filter { JuliaWorkspace.isUnfiled($0) && $0 != "*" }.sorted())
         var buckets: [[String: Any]] = ordered.compactMap { name in
             guard let windows = manifest[name], !windows.isEmpty else { return nil }
-            return ["bucket": name, "windows": wire(Array(windows.prefix(40)))]
+            return ["bucket": name, "windows": wire(Array(windows.prefix(JuliaWorkspace.maxWindowsPerBucket)))]
         }
-        buckets = Array(buckets.prefix(limit - 1))
-        buckets.append(["bucket": "*", "windows": wire(Array((manifest["*"] ?? []).prefix(40)))])
+        buckets = Array(buckets.prefix(max(0, limit - unfiled.count)))
+        for name in unfiled { buckets.append(["bucket": name, "windows": wire(Array((manifest[name] ?? []).prefix(JuliaWorkspace.maxWindowsPerBucket)))]) }
         return buckets
     }
 
