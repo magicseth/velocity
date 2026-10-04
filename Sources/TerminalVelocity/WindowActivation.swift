@@ -39,14 +39,26 @@ extension WindowCatalog {
     }
 
     @MainActor static func focus(_ entry: WindowEntry) async -> Bool {
-        guard entry.cachedTerminal == nil else { return false }
-        guard let app = NSRunningApplication(processIdentifier: entry.pid), !app.isTerminated else { return false }
+        guard entry.cachedTerminal == nil else { JuliaLog.note("focus: “\(entry.title.prefix(30))” is a cached terminal, not a live window"); return false }
+        // NSRunningApplication(processIdentifier:) intermittently came back nil inside Velocity for
+        // apps that were plainly running (Terminal 792, Chrome 15789 — "is gone"), and the whole
+        // group failed: "i saw the chrome tab change in the background but it didn't come to the
+        // foreground". The window-server raise needs only the pid; the app object is only for
+        // activation. Look harder, and treat a live pid as alive.
+        let app = NSRunningApplication(processIdentifier: entry.pid)
+            ?? NSWorkspace.shared.runningApplications.first { $0.processIdentifier == entry.pid }
+        let alive = (kill(entry.pid, 0) == 0 || errno == EPERM)
+        guard alive, app?.isTerminated != true else { JuliaLog.note("focus: \(entry.appName) (pid \(entry.pid)) is gone"); return false }
+        if app == nil { JuliaLog.note("focus: no app object for \(entry.appName) (pid \(entry.pid)); raising through the window server") }
         if let browserTab = entry.browserTab {
             // Scripting owns the exact browser destination. AX windows from the
             // scan may have been recreated or associated with another tab; never
             // raise those cached windows after selecting a stable browser ID.
-            guard await BrowserTabs.select(browserTab) else { return false }
-            app.unhide()
+            // A failed check is not a reason to leave Chrome in the back: the script may have switched
+            // the tab and only mis-reported it. Bring the browser forward anyway; report the miss.
+            let selected = await BrowserTabs.select(browserTab)
+            if !selected { JuliaLog.note("focus: tab select not confirmed for “\(entry.title.prefix(30))”; raising the browser anyway") }
+            app?.unhide()
             // ONE BROWSER WINDOW: the tab is selected and its window ordered front inside the
             // browser; the window server then puts that window — the browser's topmost — in
             // front alone. Activating the app instead brought every browser window along.
@@ -55,21 +67,22 @@ extension WindowCatalog {
             }
             JuliaLog.note("focus: browser window server raise not honoured; activating the app")
             if NSWorkspace.shared.frontmostApplication?.processIdentifier != entry.pid {
+                guard let app else { JuliaLog.note("focus: can't activate \(entry.appName) without its app object"); return false }
                 if NSApp.isActive {
                     NSApp.yieldActivation(to: app)
-                    guard app.activate(from: .current, options: []) else { return false }
+                    guard app.activate(from: .current, options: []) else { JuliaLog.note("focus: \(entry.appName) refused activation"); return false }
                 } else {
-                    guard app.activate(options: []) else { return false }
+                    guard app.activate(options: []) else { JuliaLog.note("focus: \(entry.appName) refused activation"); return false }
                 }
             }
-            return true
+            return selected
         }
-        if app.isHidden { app.unhide() }
+        if app?.isHidden == true { app?.unhide() }
         // Only when it IS minimized: writing the attribute to an unminimized window made
         // Terminal order every window forward (measured).
         if let window = entry.element, entry.minimized {
             let result = AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
-            if result == .invalidUIElement { return false }
+            if result == .invalidUIElement { JuliaLog.note("focus: “\(entry.title.prefix(30))” window no longer exists (stale scan)"); return false }
         }
         // ONE WINDOW, NOT THE APP ("i double clicked on docs, and it foregrounded way too
         // many windows"): the window server puts exactly this window in front. The app
@@ -88,6 +101,7 @@ extension WindowCatalog {
         // Keep our palette active until macOS accepts the handoff. Hiding our
         // last window first can give activation to Finder instead.
         if NSWorkspace.shared.frontmostApplication?.processIdentifier != entry.pid {
+            guard let app else { JuliaLog.note("focus: can't activate \(entry.appName) without its app object"); return false }
             let activated: Bool
             if NSApp.isActive {
                 NSApp.yieldActivation(to: app)
@@ -95,7 +109,7 @@ extension WindowCatalog {
             } else {
                 activated = app.activate(options: [])
             }
-            guard activated else { return false }
+            guard activated else { JuliaLog.note("focus: \(entry.appName) refused activation"); return false }
         }
         guard let window = entry.element else { return true }
         AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
@@ -105,6 +119,7 @@ extension WindowCatalog {
             guard NSWorkspace.shared.frontmostApplication?.processIdentifier == entry.pid else { return }
             AXUIElementPerformAction(window, kAXRaiseAction as CFString)
         }
+        if raised != .success { JuliaLog.note("focus: AX raise of “\(entry.title.prefix(30))” returned \(raised.rawValue)") }
         return raised == .success
     }
 }

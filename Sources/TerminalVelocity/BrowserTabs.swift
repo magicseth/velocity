@@ -119,14 +119,20 @@ enum BrowserTabs {
             process.arguments = ["-e", source]
             let output = Pipe()
             process.standardOutput = output
-            process.standardError = FileHandle.nullDevice
+            let errPipe = Pipe(); process.standardError = errPipe
             do { try process.run() } catch { return false }
             let deadline = DispatchWorkItem { if process.isRunning { process.terminate() } }
             DispatchQueue.global().asyncAfter(deadline: .now() + 10, execute: deadline)
             defer { deadline.cancel() }
             process.waitUntilExit()
             let data = output.fileHandleForReading.readDataToEndOfFile()
-            return process.terminationStatus == 0 && String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) == "true"
+            let out = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let ok = process.terminationStatus == 0 && out == "true"
+            // SAY WHY when it fails ("i saw the chrome tab change in the background but it didn't
+            // come to the foreground" — the log only said FAILED).
+            if !ok, let e = String(data: errPipe.fileHandleForReading.availableData, encoding: .utf8), !e.isEmpty { JuliaLog.note("browser select stderr: \(e.prefix(200))") }
+            if !ok { JuliaLog.note("browser select failed: exit \(process.terminationStatus), said “\(out.prefix(80))”") }
+            return ok
         }.value
     }
 

@@ -450,7 +450,13 @@ enum JuliaKeychain {
     }
 
     private func raise(_ entry: WindowEntry) async -> ActReceipt {
-        guard let app = NSRunningApplication(processIdentifier: entry.pid), !app.isTerminated else {
+        // A remembered window (no AX element) can't be raised by itself — find the live one at the
+        // same place before falling back to activating the whole app.
+        if entry.element == nil, let live = (allEntries?() ?? []).first(where: { $0.element != nil && $0.pid == entry.pid && $0.cachedTerminal == nil && JuliaWorkspace.signature($0) == JuliaWorkspace.signature(entry) }) {
+            JuliaLog.note("raise: “\(entry.title.prefix(30))” had no live window; using the live one at the same place")
+            return await raise(live)
+        }
+        guard let app = NSRunningApplication(processIdentifier: entry.pid) ?? NSWorkspace.shared.runningApplications.first(where: { $0.processIdentifier == entry.pid }), !app.isTerminated else {
             return .failed(class: "stale", why: "That app is no longer running.")
         }
         let tint = glowTint
@@ -543,7 +549,12 @@ enum JuliaKeychain {
     /// then a terminal sitting in a parent or child of that folder. Never a random one.
     static func terminal(inFolder sig: String, in entries: [WindowEntry]) -> WindowEntry? {
         let want = sig.lowercased()
-        let terms = entries.filter(\.terminal)
+        // LIVE WINDOWS ONLY when any exist: a cached terminal (remembered, no AX element) can't be
+        // raised, so picking one activated the WHOLE Terminal app and whatever was on top won ("i
+        // clicked on the auth v2 card, but it didn't bring the right terminal forward").
+        let all = entries.filter(\.terminal)
+        let live = all.filter { $0.element != nil && $0.cachedTerminal == nil }
+        let terms = live.isEmpty ? all : live
         let pick: ([WindowEntry]) -> WindowEntry? = { $0.first(where: { $0.attention != .none }) ?? $0.first }
         if let e = pick(terms.filter { JuliaWorkspace.signature($0) == want }) { return e }
         let name = String(want.split(separator: "/").last ?? Substring(want.dropFirst(5)))
