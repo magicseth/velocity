@@ -71,7 +71,7 @@ struct JuliaReporter: Equatable {
     /// `screen`: for a waiting tab, its tty and what is on it (nil in tests and when
     /// Terminal cannot be asked). The tty rides in the handle; the question rides beside it.
     @MainActor static func reports(_ entries: [WindowEntry], launch: (pid_t) -> Date?, screen: ((WindowEntry) -> (tty: String?, contents: String?))? = nil) -> [JuliaReport] {
-        AttentionNotifications.waiting(entries).compactMap { key, entry -> JuliaReport? in
+        let items = AttentionNotifications.waiting(entries).compactMap { key, entry -> (report: JuliaReport, title: String, extra: Void)? in
             let presentation = AttentionPresentation(entry)
             let seen = screen?(entry)
             // THE SCREEN DECIDES WHEN WE CAN READ IT. Codex titles every idle session "Action
@@ -83,10 +83,13 @@ struct JuliaReporter: Equatable {
             let handle = launch(entry.pid)
                 .flatMap { AttentionDestination(entry: entry, launch: $0, tty: seen?.tty) }
                 .flatMap(JuliaJumpHandle.encode)
-            return JuliaReport(externalId: JuliaJumpHandle.id(key), project: presentation.project,
+            let report = JuliaReport(externalId: JuliaJumpHandle.id(key), project: presentation.project,
                 subtask: presentation.task, jumpHandle: handle,
                 prompt: seen?.contents.flatMap { AttentionPrompt.extract($0) }.flatMap { AttentionPrompt.pending($0) ? $0 : nil }, harness: AttentionPrompt.harness(title: entry.title))
-        }.sorted { $0.externalId < $1.externalId }
+            return (report: report, title: entry.title, extra: ())
+        }
+        // One Codex dialog mirrored into every Codex window is ONE ask, owned by its thread's window.
+        return CodexThreads.collapse(items)
     }
 
     /// Is a title-flagged "Action Required" a real ask? Unreadable screen: trust the title (the

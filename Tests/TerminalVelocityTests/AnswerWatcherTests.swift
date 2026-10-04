@@ -196,3 +196,28 @@ final class RealAskTests: XCTestCase {
         XCTAssertFalse(JuliaReporter.isRealAsk(contents: screen))
     }
 }
+
+final class CodexMirrorTests: XCTestCase {
+    let dialog = """
+    Would you like to run the following command?
+    Thread: Agent (01a10539)
+    $ docker info
+    › 1. Yes, proceed (y)
+    Press enter to confirm or esc to cancel or o to open thread
+    """
+    func testThreadId() {
+        XCTAssertEqual(CodexThreads.threadId(inPrompt: dialog), "01a10539")
+        XCTAssertNil(CodexThreads.threadId(inPrompt: "Would you like to run x?\nPress enter to confirm"))
+    }
+    func testMirrorsCollapseToOwnerWindow() {
+        func r(_ id: String, _ prompt: String?) -> JuliaReport { JuliaReport(externalId: id, project: id, subtask: "t", jumpHandle: nil, prompt: prompt, harness: "codex") }
+        let items: [(report: JuliaReport, title: String, extra: Void)] = [
+            (r("a", dialog), "interdbqueries — Action Required | x — codex", ()),
+            (r("b", dialog), "amusebot — Action Required | Build WS0 spine — codex", ()),
+            (r("c", dialog), "lint — Action Required | y — codex", ()),
+            (r("d", nil), "other — Action Required | z — codex", ()),
+        ]
+        let out = CodexThreads.collapse(items, cwd: { _ in "/Users/x/Projects/amusebot" })
+        XCTAssertEqual(out.map(\.externalId), ["b", "d"])
+    }
+}
