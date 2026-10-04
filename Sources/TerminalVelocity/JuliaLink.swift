@@ -670,6 +670,15 @@ enum JuliaKeychain {
             projectTitles = projects.compactMap { $0["title"] as? String }
             var names: [String: [String]] = [:]
             for p in projects { if let t = p["title"] as? String { names[t] = (p["matchNames"] as? [String]) ?? [t] } }
+            // EVERY ACTIVE PROJECT'S NAME, not only those already holding windows: a brand-new
+            // project (amusebot) was invisible to the name-match, so its first terminal and tab
+            // could never be filed under it — a project that can't attract its first window.
+            for o in (value["others"] as? [[String: Any]]) ?? [] {
+                guard let t = o["title"] as? String, names[t] == nil, (o["disposition"] as? String) == "active" else { continue }
+                var n = [t]
+                if let repo = o["repoPath"] as? String { let f = (repo as NSString).lastPathComponent; if f.count >= 3, f != t { n.append(f) } }
+                names[t] = n; projectTitles.append(t)
+            }
             projectNames = names
             // Full rows for the palette (attention:byProject already gives us everything).
             let rows: [JuliaProjectRow] = projects.compactMap { p in
