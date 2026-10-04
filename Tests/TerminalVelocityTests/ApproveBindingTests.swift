@@ -27,8 +27,8 @@ final class ApproveBindingTests: XCTestCase {
         let screen = "some earlier output\n" + Self.codexDialog + "\n"
         let shown = try XCTUnwrap(AttentionPrompt.extract(screen))
         let digest = AttentionPrompt.digest(shown)
-        XCTAssertEqual(ApproveGate.before(screen: screen, digest: digest, lastReported: nil), .proceed(digest: digest))
-        XCTAssertEqual(ApproveGate.before(screen: screen, digest: digest.uppercased(), lastReported: nil), .proceed(digest: digest))
+        XCTAssertEqual(ApproveGate.before(screen: screen, digest: digest, lastReported: nil), .proceed(digest: digest, prompt: shown))
+        XCTAssertEqual(ApproveGate.before(screen: screen, digest: digest.uppercased(), lastReported: nil), .proceed(digest: digest, prompt: shown))
         // A different dialog took its place: refuse, never press.
         let other = screen.replacingOccurrences(of: "rm -rf build", with: "git push --force")
         guard case .refuse(let receipt) = ApproveGate.before(screen: other, digest: digest, lastReported: nil) else { return XCTFail("a changed question must be refused") }
@@ -36,26 +36,29 @@ final class ApproveBindingTests: XCTestCase {
         // Nothing asked any more.
         guard case .refuse(let stale) = ApproveGate.before(screen: "✔ done\n› ", digest: digest, lastReported: nil) else { return XCTFail() }
         if case .failed(let cls, _) = stale { XCTAssertEqual(cls, "stale") } else { XCTFail() }
-        XCTAssertNotEqual(ApproveGate.before(screen: nil, digest: digest, lastReported: nil), .proceed(digest: digest))
+        XCTAssertNotEqual(ApproveGate.before(screen: nil, digest: digest, lastReported: nil), .proceed(digest: digest, prompt: shown))
     }
 
     func testAnOlderJuliaWithNoDigestIsNeverBlind() throws {
         let screen = Self.codexDialog
         let shown = try XCTUnwrap(AttentionPrompt.extract(screen))
-        XCTAssertEqual(ApproveGate.before(screen: screen, digest: nil, lastReported: shown), .proceed(digest: AttentionPrompt.digest(shown)), "the prompt this Mac reported may be answered")
-        XCTAssertEqual(ApproveGate.before(screen: screen, digest: "", lastReported: shown), .proceed(digest: AttentionPrompt.digest(shown)))
+        XCTAssertEqual(ApproveGate.before(screen: screen, digest: nil, lastReported: shown), .proceed(digest: AttentionPrompt.digest(shown), prompt: shown), "the prompt this Mac reported may be answered")
+        XCTAssertEqual(ApproveGate.before(screen: screen, digest: "", lastReported: shown), .proceed(digest: AttentionPrompt.digest(shown), prompt: shown))
         if case .proceed = ApproveGate.before(screen: screen, digest: nil, lastReported: nil) { XCTFail("no digest and no report: refuse") }
         if case .proceed = ApproveGate.before(screen: screen, digest: nil, lastReported: "Do you want to proceed?\n❯ 1. Yes") { XCTFail("a different reported prompt: refuse") }
     }
 
     func testAfterOnePressTheOutcomeIsSaidHonestlyAndNeverAnswered() throws {
-        let digest = AttentionPrompt.digest(try XCTUnwrap(AttentionPrompt.extract(Self.codexDialog)))
-        XCTAssertEqual(ApproveGate.after(screen: Self.codexDialog, approved: digest), .stillAsking)
-        XCTAssertEqual(ApproveGate.after(screen: "✔ You approved codex to run rm -rf build\n• Working (2s • esc to interrupt)", approved: digest), .cleared)
+        let shown = try XCTUnwrap(AttentionPrompt.extract(Self.codexDialog))
+        let digest = AttentionPrompt.digest(shown)
+        XCTAssertEqual(ApproveGate.after(screen: Self.codexDialog, approved: shown), .stillAsking)
+        XCTAssertEqual(ApproveGate.after(screen: "✔ You approved codex to run rm -rf build\n• Working (2s • esc to interrupt)", approved: shown), .cleared)
+        XCTAssertEqual(ApproveGate.after(screen: Self.codexDialog + "\nGOT RETURN\n", approved: shown), .cleared, "the answered dialog left in the scrollback with output under it is answered, not new")
         let next = "Would you like to make the following edits?\nsrc/a.ts (+2 -1)\n› 1. Yes, proceed (y)\nPress enter to confirm or esc to cancel"
-        guard case .newAsk(let d2) = ApproveGate.after(screen: next, approved: digest) else { return XCTFail("a different dialog is a new ask") }
+        guard case .newAsk(let d2) = ApproveGate.after(screen: next, approved: shown) else { return XCTFail("a different dialog is a new ask") }
         XCTAssertNotEqual(d2, digest)
-        XCTAssertNil(ApproveGate.after(screen: nil, approved: digest))
+        XCTAssertNil(ApproveGate.after(screen: nil, approved: shown))
+        guard case .newAsk = ApproveGate.after(screen: Self.codexDialog + "\n" + next, approved: shown) else { return XCTFail("a new dialog under the answered one is a new ask") }
         // Receipts name the digest; a lingering dialog is uncertain, never "verified".
         if case .verified(_, let observed) = ApproveGate.receipt(.cleared, digest: digest, tty: "ttys001", keys: "Return") { XCTAssertTrue(observed.contains(digest)) } else { XCTFail() }
         if case .verified(_, let observed) = ApproveGate.receipt(.newAsk(digest: d2), digest: digest, tty: "ttys001", keys: "Return") {
@@ -154,5 +157,34 @@ final class ApproveBindingTests: XCTestCase {
         UserDefaults.standard.set("https://other-thing-12.convex.cloud", forKey: key)
         XCTAssertEqual(try JuliaClient().endpoint.absoluteString, "https://other-thing-12.convex.cloud")
         XCTAssertThrowsError(try JuliaClient(endpoint: "http://evil.example.com"))
+    }
+}
+
+final class ReportStabilityTests: XCTestCase {
+    func testAnUnreadableScreenKeepsTheAskItHad() {
+        var reporter = JuliaReporter(latch: 10, reassert: 60)
+        let t0 = Date(timeIntervalSince1970: 1000)
+        let asked = JuliaReport(externalId: JuliaReporter.externalId(key: "tab", prompt: "Allow x?\n› 1. Yes"), project: "p", subtask: "s",
+            jumpHandle: "with-tty", prompt: "Allow x?\n› 1. Yes", harness: "codex", tabKey: "tab")
+        let blind = JuliaReport(externalId: JuliaReporter.externalId(key: "tab", prompt: nil), project: "p", subtask: "s",
+            jumpHandle: "no-tty", prompt: nil, harness: "codex", tabKey: "tab")
+        XCTAssertEqual(reporter.observe([asked], now: t0).report, [asked])
+        XCTAssertEqual(reporter.observe([blind], now: t0.addingTimeInterval(2)), JuliaReportDiff(), "no second row, no handle flap")
+        XCTAssertEqual(reporter.observe([blind], now: t0.addingTimeInterval(20)).resolve, [], "still held: the tab is still asking")
+        let next = JuliaReport(externalId: JuliaReporter.externalId(key: "tab", prompt: "Allow y?\n› 1. Yes"), project: "p", subtask: "s",
+            jumpHandle: "with-tty", prompt: "Allow y?\n› 1. Yes", harness: "codex", tabKey: "tab")
+        let d = reporter.observe([next], now: t0.addingTimeInterval(21))
+        XCTAssertEqual(d.report, [next], "a readable new question is a new ask")
+        XCTAssertEqual(reporter.observe([next], now: t0.addingTimeInterval(40)).resolve, [asked.externalId])
+    }
+}
+
+final class JumpHandleStabilityTests: XCTestCase {
+    @MainActor func testTheSameTabAlwaysMintsTheSameHandle() throws {
+        let entry = WindowEntry(id: "792:window:1", pid: 792, appName: "Terminal", title: "x — [ ! ] Action Required | t — codex",
+            icon: nil, element: AXUIElementCreateApplication(792), minimized: false, hidden: false, terminal: true)
+        let d = try XCTUnwrap(AttentionDestination(entry: entry, launch: Date(timeIntervalSince1970: 1_791_000_000.123), tty: "ttys040"))
+        let handles = Set((0..<200).compactMap { _ in JuliaJumpHandle.encode(d) })
+        XCTAssertEqual(handles.count, 1, "a handle that changes per encode re-sends every report every scan")
     }
 }

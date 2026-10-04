@@ -28,11 +28,16 @@ struct JuliaReport: Equatable, Codable {
     /// What the agent is asking, read from the tab's screen (AttentionPrompt), and which harness.
     var prompt: String? = nil
     var harness: String? = nil
+    /// The tab (window + task) the ask is in — so an unreadable screen keeps the ask it had.
+    var tabKey: String? = nil
 }
 
 struct JuliaReportDiff: Equatable {
     var report: [JuliaReport] = []
     var resolve: [String] = []
+    /// Why each report goes out (for the log): new · changed: <fields> · re-assert.
+    var why: [String: String] = [:]
+    static func == (a: Self, b: Self) -> Bool { a.report == b.report && a.resolve == b.resolve }
 }
 
 /// A jump handle is the notification's AttentionDestination, made URL-safe. It
@@ -40,7 +45,11 @@ struct JuliaReportDiff: Equatable {
 /// like a notification click.
 enum JuliaJumpHandle {
     static func encode(_ destination: AttentionDestination) -> String? {
-        guard let data = try? JSONEncoder().encode(destination) else { return nil }
+        // SORTED KEYS: the encoder's key order is not stable from one encode to the next, so
+        // the same tab minted a different handle every scan and every report was re-sent each
+        // scan ("changed: handle(encoding)"). Decoding doesn't care about order.
+        let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+        guard let data = try? encoder.encode(destination) else { return nil }
         return data.base64EncodedString().replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
     }
@@ -92,7 +101,7 @@ struct JuliaReporter: Equatable {
             let prompt = seen?.contents.flatMap { AttentionPrompt.extract($0) }.flatMap { AttentionPrompt.pending($0) ? $0 : nil }
             let report = JuliaReport(externalId: Self.externalId(key: key, prompt: prompt), project: presentation.project,
                 subtask: presentation.task, jumpHandle: handle,
-                prompt: prompt, harness: AttentionPrompt.harness(title: entry.title))
+                prompt: prompt, harness: AttentionPrompt.harness(title: entry.title), tabKey: key)
             return (report: report, title: entry.title, extra: ())
         }
         // One Codex dialog mirrored into every Codex window is ONE ask, owned by its thread's window.
@@ -117,11 +126,21 @@ struct JuliaReporter: Equatable {
 
     mutating func observe(_ reports: [JuliaReport], now: Date = Date()) -> JuliaReportDiff {
         var diff = JuliaReportDiff()
+        // AN UNREADABLE SCREEN IS NOT A NEW QUESTION. A prompt-less report (the tty didn't
+        // resolve this scan, Terminal didn't answer) for a tab whose question we know keeps that
+        // ask — same id, prompt and handle — instead of minting a second, prompt-less row and
+        // flapping the handle's tty on every scan.
+        let known = Dictionary(current.values.filter { $0.prompt != nil && $0.tabKey != nil }.map { ($0.tabKey!, $0) }, uniquingKeysWith: { a, _ in a })
+        let reports = reports.map { r -> JuliaReport in
+            guard r.prompt == nil, let tab = r.tabKey, let held = known[tab] else { return r }
+            return held
+        }
         let live = Set(reports.map(\.externalId))
         for report in reports {
             lastSeen[report.externalId] = now
             let due = now.timeIntervalSince(lastSent[report.externalId] ?? .distantPast) >= reassert
             if current[report.externalId] != report || due {
+                diff.why[report.externalId] = Self.why(current[report.externalId], report)
                 diff.report.append(report); current[report.externalId] = report; lastSent[report.externalId] = now
             }
         }
@@ -131,6 +150,26 @@ struct JuliaReporter: Equatable {
             }
         }
         return diff
+    }
+
+    static func why(_ old: JuliaReport?, _ new: JuliaReport) -> String {
+        guard let old else { return "new" }
+        var fields: [String] = []
+        if old.project != new.project { fields.append("project") }
+        if old.subtask != new.subtask { fields.append("subtask") }
+        if old.jumpHandle != new.jumpHandle {
+            let a = old.jumpHandle.flatMap(JuliaJumpHandle.decode), b = new.jumpHandle.flatMap(JuliaJumpHandle.decode)
+            var parts: [String] = []
+            if a?.pid != b?.pid || a?.launch != b?.launch { parts.append("process") }
+            if a?.entryID != b?.entryID { parts.append("entry") }
+            if a?.windowKey != b?.windowKey { parts.append("window") }
+            if a?.task != b?.task { parts.append("task") }
+            if a?.tty != b?.tty { parts.append("tty") }
+            fields.append("handle(" + (parts.isEmpty ? "encoding" : parts.joined(separator: "/")) + ")")
+        }
+        if old.prompt != new.prompt { fields.append("prompt") }
+        if old.harness != new.harness { fields.append("harness") }
+        return fields.isEmpty ? "re-assert" : "changed: " + fields.joined(separator: ",")
     }
 
     /// Restart: whatever this Mac reported before is gone from memory but not
@@ -812,7 +851,7 @@ enum JuliaKeychain {
                     if let harness = report.harness { args["harness"] = harness }
                     do {
                         let value = try await client.call(.report, args) as? [String: Any]
-                        JuliaLog.note("attention: report \(report.externalId.prefix(8)) “\(report.subtask.prefix(40))”\(digest) → ok (\((value?["created"] as? Bool) == true ? "created" : "updated/reopened"))")
+                        JuliaLog.note("attention: report \(report.externalId.prefix(8)) “\(report.subtask.prefix(40))”\(digest) [\(diff.why[report.externalId] ?? "?")] → ok (\((value?["created"] as? Bool) == true ? "created" : "updated/reopened"))")
                     } catch {
                         JuliaLog.note("attention: report \(report.externalId.prefix(8)) “\(report.subtask.prefix(40))”\(digest) → FAILED: \(error.localizedDescription.prefix(200))")
                         throw error
@@ -994,7 +1033,7 @@ enum JuliaKeychain {
             // BOUND TO WHAT HE SAW: the screen's question must be the one he approved.
             let before = ConversationTTY.contents(ofTTY: tty)
             let gate = ApproveGate.before(screen: before, digest: JuliaWorkspace.query(in: url, "digest"), lastReported: lastReportedPrompt[tty])
-            guard case .proceed(let digest) = gate, let before else {
+            guard case .proceed(let digest, let approvedPrompt) = gate, let before else {
                 if case .refuse(let receipt) = gate {
                     JuliaLog.note("approve → tty \(tty) REFUSED (\(JuliaWorkspace.query(in: url, "digest").map { "digest " + $0.prefix(12) } ?? "no digest")): \(receipt.line)")
                     return receipt
@@ -1019,7 +1058,7 @@ enum JuliaKeychain {
             var previous: ApproveGate.After?
             for _ in 0..<15 {
                 try? await Task.sleep(for: .milliseconds(200))
-                let now = ApproveGate.after(screen: ConversationTTY.contents(ofTTY: tty), approved: digest)
+                let now = ApproveGate.after(screen: ConversationTTY.contents(ofTTY: tty), approved: approvedPrompt)
                 if let now, now != .stillAsking, now == previous { outcome = now; break }
                 previous = now
                 if now == .stillAsking { outcome = .stillAsking }

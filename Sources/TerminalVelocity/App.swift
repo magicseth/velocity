@@ -37,6 +37,7 @@ final class SearchPanel: NSPanel {
     var audioTimer: Timer?
     var lastCatalogRefresh = Date.distantPast
     var catalogTimer: Timer?
+    var terminalTimer: Timer?
     var activityTimer: Timer?
     var trackingActivity = false
     var switchingGroup = false
@@ -271,6 +272,16 @@ final class SearchPanel: NSPanel {
                 guard let self, (self.panel.isVisible || self.model.browserTabsEnabled), !self.model.showHelp else { return }
                 if !self.panel.isVisible && Date().timeIntervalSince(self.lastCatalogRefresh) < 60 { return }
                 self.refresh()
+            }
+        }
+        // AN ASK REACHES JULIA IN SECONDS, NOT A MINUTE. With the palette hidden the only scan
+        // was the 60 s catalog round, so a terminal that started asking could wait up to a
+        // minute before its title was even read. While paired, re-read terminals (only — a
+        // ~200 ms off-main AX pass) every 3 s; observeAttention follows each scan.
+        terminalTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.julia.state == .paired, !self.scanning, !self.panel.isVisible else { return }
+                self.refreshTerminals()
             }
         }
         activationObserver = NSWorkspace.shared.notificationCenter.addObserver(

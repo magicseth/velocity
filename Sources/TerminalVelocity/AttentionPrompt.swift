@@ -129,7 +129,7 @@ enum AttentionPrompt {
 /// sends none, the prompt Velocity itself last reported for that tab); the key goes in ONCE;
 /// what follows is read and said honestly, never answered.
 enum ApproveGate {
-    enum Before: Equatable { case proceed(digest: String), refuse(ActReceipt) }
+    enum Before: Equatable { case proceed(digest: String, prompt: String), refuse(ActReceipt) }
     enum After: Equatable { case cleared, stillAsking, newAsk(digest: String) }
 
     static func before(screen: String?, digest sent: String?, lastReported: String?) -> Before {
@@ -139,19 +139,27 @@ enum ApproveGate {
         let now = AttentionPrompt.digest(asking)
         let changed = ActReceipt.failed(class: "changed", why: "The question on screen changed — open it to decide.")
         if let sent = sent?.trimmingCharacters(in: .whitespaces).lowercased(), !sent.isEmpty {
-            return sent == now ? .proceed(digest: now) : .refuse(changed)
+            return sent == now ? .proceed(digest: now, prompt: asking) : .refuse(changed)
         }
         // An older Julia sent no digest: never blind — only the prompt this Mac reported.
         guard let lastReported, AttentionPrompt.digest(lastReported) == now else { return .refuse(changed) }
-        return .proceed(digest: now)
+        return .proceed(digest: now, prompt: asking)
     }
 
-    /// One read after the key went in.
+    /// One read after the key went in. `approved` is the prompt he said yes to.
     static func after(screen: String?, approved: String) -> After? {
         guard let screen else { return nil }   // unreadable: no evidence either way
         guard let asking = AttentionPrompt.extract(screen), AttentionPrompt.pending(asking) else { return .cleared }
-        let now = AttentionPrompt.digest(asking)
-        return now == approved ? .stillAsking : .newAsk(digest: now)
+        let was = AttentionPrompt.normalized(approved), now = AttentionPrompt.normalized(asking)
+        if now == was { return .stillAsking }
+        // The answered dialog can stay in the scrollback with output under it (a shell y/n,
+        // a harness that prints below it): only what came AFTER it can be a new question.
+        if let r = now.range(of: was, options: .backwards) {
+            let after = String(now[r.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !after.isEmpty, AttentionPrompt.pending(after) else { return .cleared }
+            return .newAsk(digest: AttentionPrompt.digest(after))
+        }
+        return .newAsk(digest: AttentionPrompt.digest(asking))
     }
 
     /// The receipt for what was seen after ONE press (nil = never saw it settle).
