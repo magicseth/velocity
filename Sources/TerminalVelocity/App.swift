@@ -112,6 +112,11 @@ final class SearchPanel: NSPanel {
         activeChip.onAssign = { [weak self] sig, id in self?.julia.place(sig: sig, projectId: id) }
         activeChip.onCreate = { [weak self] sig, title in self?.julia.createAndPlace(sig: sig, title: title) }
         activeChip.onShowAll = { [weak self] title in self?.foregroundProject(title: title) }
+        activeChip.onHoverProject = { [weak self] project, from in
+            guard let self, let project, Self.wiresOn else { ProjectWires.hide(); return }
+            let frames = ProjectWires.frames(of: self.julia.projectMembers(project, keys: nil, in: self.model.all))
+            ProjectWires.show(key: project, from: from, to: frames, tint: .systemBlue)
+        }
         julia.notice = { [weak self] text in self?.model.message = text }
         julia.allEntries = { [weak self] in self?.model.all ?? [] }
         julia.foreground = { [weak self] entries, lead in await self?.focusGroup(entries, selected: lead) ?? false }
@@ -539,6 +544,40 @@ final class SearchPanel: NSPanel {
         }
     }
 
+    /// Bring companion windows forward without waiting on each: tabs chosen in parallel, then
+    /// one instant window-server raise apiece. Returns the entries it handled; the rest fall
+    /// back to the careful one-at-a-time focus.
+    func stageCompanions(_ companions: [WindowEntry]) async -> [WindowEntry] {
+        // Two tabs in one browser can't be told apart by "the browser's top window" — those stay careful.
+        let browserCount = Dictionary(grouping: companions.filter { $0.browserTab != nil }, by: \.pid).mapValues(\.count)
+        let simple = companions.filter { $0.cachedTerminal == nil && $0.conversation == nil && $0.notionTab == nil && $0.chatProject == nil
+            && ($0.browserTab == nil || browserCount[$0.pid] == 1) }
+        // 1. Every tab at once.
+        let ready: [String: Bool] = await withTaskGroup(of: (String, Bool).self) { group in
+            for e in simple {
+                group.addTask { @MainActor in
+                    if let app = NSRunningApplication(processIdentifier: e.pid), app.isHidden { app.unhide() }
+                    if let w = e.element, e.minimized { AXUIElementSetAttributeValue(w, kAXMinimizedAttribute as CFString, kCFBooleanFalse) }
+                    if let tab = e.browserTab { return (e.id, await BrowserTabs.select(tab)) }
+                    if e.tab != nil, let live = WindowCatalog.liveTab(for: e) { AXUIElementPerformAction(live, kAXPressAction as CFString) }
+                    return (e.id, true)
+                }
+            }
+            var out: [String: Bool] = [:]
+            for await (id, ok) in group { out[id] = ok }
+            return out
+        }
+        // 2. Stack them, back to back. A browser's window is its topmost after the tab select.
+        var done: [WindowEntry] = []
+        for e in simple where ready[e.id] == true {
+            let wid: CGWindowID? = e.browserTab != nil ? WindowRaise.topWindowID(pid: e.pid) : e.element.flatMap { WindowRaise.windowID(of: $0) }
+            guard let wid, WindowRaise.front(pid: e.pid, windowID: wid) else { continue }
+            WindowRaise.glow(windowID: wid, tint: WindowRaise.currentTint)
+            done.append(e)
+        }
+        return done
+    }
+
     func focusGroup(_ entries: [WindowEntry], selected: WindowEntry) async -> Bool {
         guard !switchingGroup else { return false }
         switchingGroup = true
@@ -562,7 +601,18 @@ final class SearchPanel: NSPanel {
             guard let key = groupKey($0), key != selectedKey, seen.insert(key).inserted else { return false }
             return true
         }
-        let result = await FocusSequence.run(companions: companions, selected: selected) { entry in
+        // FAST COMPANIONS ("it takes a long time to bring all the windows up, can we try in
+        // parallel instead of serial?"). Each companion used to be focused one at a time —
+        // activate, wait up to a second for its app to be frontmost, 140 ms, select its tab —
+        // and browser tabs each spawned their own AppleScript in turn. Now: every companion's
+        // tab is chosen AT ONCE (scripts and AX presses in parallel, nothing needs its app in
+        // front), then the windows are stacked through the window server back to back with no
+        // waits. Only the window he'll work in gets the full, verified focus below.
+        let t0 = Date()
+        let staged = await stageCompanions(companions)
+        JuliaLog.note("group: \(staged.count)/\(companions.count) companions staged in \(Int(Date().timeIntervalSince(t0) * 1000)) ms")
+        let pending = companions.filter { e in !staged.contains { $0.id == e.id } }
+        let result = await FocusSequence.run(companions: pending, selected: selected) { entry in
             guard await WindowCatalog.focus(entry) else { JuliaLog.note("focus FAILED: \(entry.appName) “\(entry.title.prefix(40))” tab=\(entry.browserTab != nil)"); return false }
             JuliaLog.note("focus ok: \(entry.appName) “\(entry.title.prefix(40))”")
             // Activation is asynchronous and can take longer than a fixed 180 ms,
@@ -858,6 +908,9 @@ final class SearchPanel: NSPanel {
 
     /// Bring EVERY window of a project forward (the chip's double-click; same resolution the
     /// palette's project row uses): name-matched windows plus any he placed here by signature.
+    /// Hover wires to a project's windows — OFF until redesigned ("hover wires are shit").
+    static let wiresOn = false
+
     @MainActor func foregroundProject(title: String) {
         let row = julia.projectRows.first { $0.title == title }
         var members = JuliaWorkspace.group(for: title, names: row?.matchNames ?? [title], in: model.all)?.entries ?? []

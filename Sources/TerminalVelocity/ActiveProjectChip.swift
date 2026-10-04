@@ -18,10 +18,18 @@ import SwiftUI
     var onCreate: (_ sig: String, _ title: String) -> Void = { _, _ in }
     /// Double-click the blue tag → bring ALL of that project's windows forward.
     var onShowAll: (_ project: String) -> Void = { _ in }
+    /// Mouse over the tag: project + the tag's bottom-centre (Cocoa); nil project = left it.
+    var onHoverProject: (_ project: String?, _ from: NSPoint) -> Void = { _, _ in }
     private var currentProject: String?
 
     init() {
         chip.onClick = { [weak self] in self?.togglePicker() }
+        // Mouse over the tag: threads to every window of its project.
+        chip.onHover = { [weak self] over in
+            guard let self else { return }
+            let f = self.chip.frame
+            self.onHoverProject(over ? self.currentProject : nil, NSPoint(x: f.midX, y: f.minY))
+        }
         // Double-click the blue tag shows every window of its project ("when i double click the
         // blue project tag on a window, all of its windows should show up").
         chip.onDoubleClick = { [weak self] in
@@ -100,8 +108,9 @@ import SwiftUI
     /// A borderless panel that reports a click (the chip taps into the picker).
     final class ClickPanel: NSPanel {
         var onClick: () -> Void = {}
+        var onHover: (Bool) -> Void = { _ in }
         private let label = NSTextField(labelWithString: "")
-        private let bg = NSView()
+        private let bg = HoverView()
         init() {
             super.init(contentRect: NSRect(x: 0, y: 0, width: 60, height: 26), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             isOpaque = false; backgroundColor = .clear; hasShadow = true
@@ -114,6 +123,7 @@ import SwiftUI
                 label.trailingAnchor.constraint(equalTo: bg.trailingAnchor, constant: -11),
                 label.centerYAnchor.constraint(equalTo: bg.centerYAnchor)])
             contentView = bg
+            bg.onHover = { [weak self] in self?.onHover($0) }
         }
         func render(project: String?) {
             label.stringValue = project.map { "◆  " + $0 } ?? "＋  Tag project"
@@ -123,6 +133,17 @@ import SwiftUI
         }
         var onDoubleClick: () -> Void = {}
         override func mouseDown(with event: NSEvent) { if event.clickCount >= 2 { onDoubleClick() } else { onClick() } }
+    }
+    /// Reports the mouse entering/leaving the chip (a tracking area that follows its size).
+    final class HoverView: NSView {
+        var onHover: (Bool) -> Void = { _ in }
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            trackingAreas.forEach(removeTrackingArea)
+            addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+        }
+        override func mouseEntered(with event: NSEvent) { onHover(true) }
+        override func mouseExited(with event: NSEvent) { onHover(false) }
     }
     final class KeyPanel: NSPanel {
         override var canBecomeKey: Bool { true }

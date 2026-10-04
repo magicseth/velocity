@@ -215,6 +215,10 @@ enum JuliaKeychain {
     private var machineObservers: [NSObjectProtocol] = []
     /// The last `now` sent: an activation is reported once, not on every 1 s activity tick.
     private var lastNow: (app: String, key: String)?
+    private var lastNowEntry: WindowEntry?
+    private var lastNowSentAt = Date.distantPast
+    private var focusPulse: Timer?
+    private var reportedIdle = false
 
     init() {
         token = JuliaKeychain.token()
@@ -266,20 +270,49 @@ enum JuliaKeychain {
     }
 
     /// NOW: what his hands are on. Sent when the frontmost window changes (App.swift's
-    /// activation tracking hands the focused entry here) — an event, never a timer.
+    /// activation tracking hands the focused entry here), and — so a long stretch in one window
+    /// keeps counting in his history ("i want to know how much time i'm watching youtube videos,
+    /// playing games, typing talking, testing") — re-sent once a minute while he is active, with
+    /// what his hands did since: keys, clicks, seconds the mic was live, seconds since input.
+    /// Five minutes without input sends one idle report, which closes the span where input stopped.
     func now(_ entry: WindowEntry) {
         guard state == .paired else { return }
         let sig = JuliaWorkspace.signature(entry)
-        let key = sig
-        if let last = lastNow, last.app == entry.appName, last.key == key { return }
-        lastNow = (entry.appName, key)
+        if let last = lastNow, last.app == entry.appName, last.key == sig { return }
+        lastNow = (entry.appName, sig)
+        lastNowEntry = entry
+        sendNow(entry, idle: false)
+        startFocusPulse()
+    }
+
+    private func sendNow(_ entry: WindowEntry, idle: Bool) {
         guard let client = try? JuliaClient() else { return }
-        var args: [String: Any] = ["token": token, "machineId": MachineIdentity.machineId, "app": entry.appName, "idle": false]
+        let sig = JuliaWorkspace.signature(entry)
+        var args: [String: Any] = ["token": token, "machineId": MachineIdentity.machineId, "app": entry.appName, "idle": idle]
         if !JuliaWorkspace.looksSensitive(entry.title) { args["title"] = String(entry.title.prefix(140)) }
         if !sig.hasPrefix("win:") { args["sig"] = sig }
+        args["input"] = InputCounters.shared.take()
+        lastNowSentAt = Date()
         Task { do { _ = try await client.call(path: PrefrontalFunction.now, args) } catch { JuliaLog.note("prefrontal: now failed: \(error.localizedDescription.prefix(200))") } }
     }
 
+    /// Every 5 s: sample the mic; every 60 s while active: the heartbeat; idle ≥ 5 min: one idle report.
+    private func startFocusPulse() {
+        guard focusPulse == nil else { return }
+        focusPulse = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.state == .paired, let entry = self.lastNowEntry else { return }
+                InputCounters.shared.sampleMic(seconds: 5)
+                let idle = InputCounters.idleSeconds()
+                if idle >= 300 {
+                    if !self.reportedIdle { self.reportedIdle = true; self.sendNow(entry, idle: true) }
+                    return
+                }
+                if self.reportedIdle { self.reportedIdle = false; self.sendNow(entry, idle: false); return }   // back
+                if Date().timeIntervalSince(self.lastNowSentAt) >= 60 { self.sendNow(entry, idle: false) }
+            }
+        }
+    }
     /// A command from another surface, run through the same velocity:// handling a
     /// same-machine click uses — and RESOLVED ONLY WITH ITS RECEIPT: how the outcome was
     /// seen, or why it could not be. `wake` and `doctor` answer for themselves.
@@ -756,6 +789,14 @@ enum JuliaKeychain {
               let handle = items.first(where: { $0.name == "handle" })?.value, !handle.isEmpty else { return nil }
         return handle
     }
+    /// A project's live windows: the ones Julia placed there (by key), then the name matches.
+    func projectMembers(_ project: String, keys: String?, in entries: [WindowEntry]) -> [WindowEntry] {
+        let wanted = Set((keys ?? "").split(separator: ",").map(String.init))
+        var members = entries.filter { wanted.contains($0.id) }
+        for e in JuliaWorkspace.group(for: project, names: projectNames[project], in: entries)?.entries ?? [] where !members.contains(where: { $0.id == e.id }) { members.append(e) }
+        for e in entries where !members.contains(where: { $0.id == e.id }) && self.project(forSig: JuliaWorkspace.signature(e)) == project { members.append(e) }
+        return members
+    }
     func open(_ url: URL) {
         guard url.scheme == "velocity" else { return }
         // velocity://run?id=<commandId> — the same-machine NUDGE for a row Julia.app just
@@ -784,6 +825,19 @@ enum JuliaKeychain {
         guard url.scheme == "velocity" else { return .failed(class: "invalid", why: "Not a velocity:// URL.") }
         JuliaLog.note("act \(url.host ?? "?") received")
         let entries = allEntries?() ?? []
+        // velocity://wires?project=X&windows=k1,k2&x=..&y=.. — threads from the pointer (Cocoa
+        // screen coords) to every on-screen window of the project, while he hovers it in Julia.
+        // velocity://wires?clear=1 — gone. Purely visual: nothing is raised or focused.
+        if url.host == "wires" {
+            if JuliaWorkspace.query(in: url, "clear") != nil { ProjectWires.hide(); return .verified(method: "drawn", observed: "wires cleared") }
+            guard let project = JuliaWorkspace.query(in: url, "project") else { return .failed(class: "invalid", why: "Wires for which project?") }
+            let members = projectMembers(project, keys: JuliaWorkspace.query(in: url, "windows"), in: entries)
+            let frames = ProjectWires.frames(of: members)
+            let x = Double(JuliaWorkspace.query(in: url, "x") ?? "") , y = Double(JuliaWorkspace.query(in: url, "y") ?? "")
+            let from = x.flatMap { x in y.map { NSPoint(x: x, y: $0) } } ?? NSEvent.mouseLocation
+            ProjectWires.show(key: project, from: from, to: frames, tint: glowTint == .white ? .systemTeal : glowTint)
+            return .verified(method: "drawn", observed: "\(frames.count) wire\(frames.count == 1 ? "" : "s") to \(project)")
+        }
         // velocity://foreground?project=X — everything for that project, at once.
         if url.host == "foreground", let project = JuliaWorkspace.query(in: url, "project") {
             // Julia's attribution first (his placements, Jev's judgments — windows whose
