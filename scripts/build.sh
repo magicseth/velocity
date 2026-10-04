@@ -10,9 +10,11 @@ if [[ -z "$IDENTITY" ]]; then
     echo "For an explicitly ad-hoc build, use CODE_SIGN_IDENTITY=- (Accessibility may reset after rebuilds)." >&2
     exit 1
 fi
+# Where the bundle lands (default dist/). VELOCITY_DIST=dist/farewell builds BESIDE the copy he is running.
+DIST="${VELOCITY_DIST:-$PWD/dist}"
 case "${VELOCITY_EXPERIMENTAL:-0}" in
-    0) swift build -c release; APP="$PWD/dist/Terminal Velocity.app" ;;
-    1) swift build -c release -Xswiftc -DVELOCITY_EXPERIMENTAL; APP="$PWD/dist/private/Terminal Velocity.app" ;;
+    0) swift build -c release; APP="$DIST/Terminal Velocity.app" ;;
+    1) swift build -c release -Xswiftc -DVELOCITY_EXPERIMENTAL; APP="$DIST/private/Terminal Velocity.app" ;;
     *) echo "VELOCITY_EXPERIMENTAL must be 0 or 1" >&2; exit 1 ;;
 esac
 # BUILD BESIDE, THEN SWAP. Overwriting the bundle of a RUNNING Velocity in place changed the

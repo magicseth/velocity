@@ -26,7 +26,9 @@ final class SearchPanel: NSPanel {
     var objectiveHotKey: EventHotKeyRef?
     let objectiveFocus = ObjectiveFocus()
     let attentionNotifications = AttentionNotifications()
-    let julia = JuliaLink()
+    /// Lazy: the farewell build never makes one — no pairing read, no registration, no reports.
+    lazy var julia = JuliaLink()
+    var farewellWindow: NSWindow?
     let activeChip = ActiveProjectChip()
     private var chipTimer: Timer?
     private var lastChipEntryKey: String?
@@ -67,6 +69,17 @@ final class SearchPanel: NSPanel {
     ]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // THE FAREWELL BUILD: say Velocity lives in Julia now, and do nothing else.
+        NSApp.setActivationPolicy(.accessory)
+        farewellWindow = Farewell.show()
+        return
+    }
+
+    /// Closing the farewell window is done with Velocity.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { farewellWindow != nil }
+
+    /// The app as it was before Julia absorbed it (kept for reference; never called in 0.2.0).
+    func launchStandalone() {
         if Features.experimentalAgents {
         do {
             if let endpoint = try AIGrouping.importConfiguration(arguments: CommandLine.arguments) { model.aiEndpoint = endpoint }
@@ -549,7 +562,8 @@ final class SearchPanel: NSPanel {
         if julia.state != .unpaired { julia.toggle() }   // a token is minted by ONE deployment
     }
     func application(_ application: NSApplication, open urls: [URL]) {
-        for url in urls { julia.open(url) }
+        // Julia owns the hands now; never act (or report) from here.
+        Farewell.forward(urls)
     }
     @objc func accessibility() { model.openAccessibility() }
     @objc func enableBrowserTabs() { model.enableBrowserTabs() }
