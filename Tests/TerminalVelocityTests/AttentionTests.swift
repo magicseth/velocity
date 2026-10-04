@@ -7,7 +7,7 @@ final class AttentionTests: XCTestCase {
         for mark in ["!", "."] {
             XCTAssertEqual(AgentAttention.detect(title: "project — [ \(mark) ] Action Required | task — codex", terminal: true), .needsInput)
         }
-        XCTAssertEqual(AgentAttention.detect(title: "Fix Action Required title parsing — codex", terminal: true), .none)
+        XCTAssertEqual(AgentAttention.detect(title: "Fix Action Required title parsing — codex", terminal: true), .idle, "a task ABOUT approvals is not one; Codex with no spinner is idle")
         XCTAssertEqual(AgentAttention.detect(title: "[ ! ] Action Required | docs", terminal: false), .none)
     }
     func testClaudeIdleIsNotAnApprovalAndSpinnerIsWorking() {

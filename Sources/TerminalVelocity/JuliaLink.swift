@@ -64,9 +64,15 @@ enum JuliaJumpHandle {
 struct JuliaReporter: Equatable {
     private(set) var current: [String: JuliaReport] = [:]
     private var lastSeen: [String: Date] = [:]
+    /// When each live report last went to the board. The server can close a row on its own
+    /// (his Done, the backstop sweep) while the tab still waits — comparing only against our
+    /// memory would never say it again. So a live report is re-asserted every `reassert`
+    /// seconds (attention:report is idempotent per externalId and reopens a closed row).
+    private var lastSent: [String: Date] = [:]
     let latch: TimeInterval
+    let reassert: TimeInterval
 
-    init(latch: TimeInterval = 10) { self.latch = latch }
+    init(latch: TimeInterval = 10, reassert: TimeInterval = 60) { self.latch = latch; self.reassert = reassert }
 
     /// `screen`: for a waiting tab, its tty and what is on it (nil in tests and when
     /// Terminal cannot be asked). The tty rides in the handle; the question rides beside it.
@@ -83,13 +89,22 @@ struct JuliaReporter: Equatable {
             let handle = launch(entry.pid)
                 .flatMap { AttentionDestination(entry: entry, launch: $0, tty: seen?.tty) }
                 .flatMap(JuliaJumpHandle.encode)
-            let report = JuliaReport(externalId: JuliaJumpHandle.id(key), project: presentation.project,
+            let prompt = seen?.contents.flatMap { AttentionPrompt.extract($0) }.flatMap { AttentionPrompt.pending($0) ? $0 : nil }
+            let report = JuliaReport(externalId: Self.externalId(key: key, prompt: prompt), project: presentation.project,
                 subtask: presentation.task, jumpHandle: handle,
-                prompt: seen?.contents.flatMap { AttentionPrompt.extract($0) }.flatMap { AttentionPrompt.pending($0) ? $0 : nil }, harness: AttentionPrompt.harness(title: entry.title))
+                prompt: prompt, harness: AttentionPrompt.harness(title: entry.title))
             return (report: report, title: entry.title, extra: ())
         }
         // One Codex dialog mirrored into every Codex window is ONE ask, owned by its thread's window.
         return CodexThreads.collapse(items)
+    }
+
+    /// ONE ASK PER QUESTION: the tab (window + task) AND the prompt's digest when one was read.
+    /// A second dialog in the same tab is a new ask — the Mac hides by this id, so reusing the
+    /// tab's id kept a new dialog in a snoozed tab hidden. No prompt read: the tab's id.
+    nonisolated static func externalId(key: String, prompt: String?) -> String {
+        guard let prompt else { return JuliaJumpHandle.id(key) }
+        return JuliaJumpHandle.id(key + "\u{1F}" + AttentionPrompt.digest(prompt))
     }
 
     /// Is a title-flagged "Action Required" a real ask? Unreadable screen: trust the title (the
@@ -105,11 +120,14 @@ struct JuliaReporter: Equatable {
         let live = Set(reports.map(\.externalId))
         for report in reports {
             lastSeen[report.externalId] = now
-            if current[report.externalId] != report { diff.report.append(report); current[report.externalId] = report }
+            let due = now.timeIntervalSince(lastSent[report.externalId] ?? .distantPast) >= reassert
+            if current[report.externalId] != report || due {
+                diff.report.append(report); current[report.externalId] = report; lastSent[report.externalId] = now
+            }
         }
         for id in current.keys.sorted() where !live.contains(id) {
             if now.timeIntervalSince(lastSeen[id] ?? .distantPast) >= latch {
-                diff.resolve.append(id); current[id] = nil; lastSeen[id] = nil
+                diff.resolve.append(id); current[id] = nil; lastSeen[id] = nil; lastSent[id] = nil
             }
         }
         return diff
@@ -135,9 +153,15 @@ struct JuliaClient {
     }
     struct Failure: LocalizedError { let message: String; var errorDescription: String? { message } }
     static let defaultEndpoint = "https://hidden-kudu-77.convex.cloud"
+    /// The setting (menu ▸ Julia Backend…); unset = the default, so nothing changes for Seth.
+    static let endpointKey = "juliaEndpoint"
+    static var configuredEndpoint: String {
+        let v = UserDefaults.standard.string(forKey: endpointKey)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return v.isEmpty ? defaultEndpoint : v
+    }
     let endpoint: URL
 
-    init(endpoint: String = UserDefaults.standard.string(forKey: "juliaEndpoint") ?? JuliaClient.defaultEndpoint) throws {
+    init(endpoint: String = JuliaClient.configuredEndpoint) throws {
         guard let url = URL(string: endpoint), url.scheme == "https", url.host?.hasSuffix(".convex.cloud") == true,
               url.user == nil, url.query == nil, url.fragment == nil, url.path.isEmpty || url.path == "/" else {
             throw Failure(message: "Julia’s endpoint must be an HTTPS .convex.cloud deployment URL.")
@@ -277,7 +301,7 @@ enum JuliaKeychain {
         }
         prefrontal?.start(token: token)
     }
-    private func leavePrefrontal() { prefrontal?.stop() }
+    private func leavePrefrontal() { prefrontal?.stop(); prefrontal = nil }   // re-made on the next pairing (the endpoint may have changed)
 
     private func reportMachineState(_ machineState: String) {
         guard state == .paired, let client = try? JuliaClient() else { return }
@@ -632,9 +656,16 @@ enum JuliaKeychain {
             screens[entry.id] ?? (tty: nil, contents: nil)
         }
         pendingReports = reports
+        // Per tab: the question this Mac last reported — an approve from an older Julia (no
+        // digest) may only answer exactly that.
+        for r in reports {
+            guard let tty = r.jumpHandle.flatMap(JuliaJumpHandle.decode)?.tty else { continue }
+            lastReportedPrompt[tty] = r.prompt
+        }
         if let raw = rawManifest {
             let now = Date()
-            let current = firstSeen.stamp(raw.mapValues { latch.apply($0, now: now) }, now: now)
+            let refined = Self.refine(raw, screens: screens.mapValues(\.contents))
+            let current = firstSeen.stamp(refined.mapValues { latch.apply($0, now: now) }, now: now)
             let changed = JuliaWorkspace.changes(previous: workspace, current: current)
             if !changed.isEmpty { pendingWorkspace = (pendingWorkspace ?? [:]).merging(changed) { _, new in new } }
             chipNewlyClassified(current, entries: all)
@@ -642,6 +673,20 @@ enum JuliaKeychain {
         }
         if Date().timeIntervalSince(projectsFetchedAt) > 60 { refreshProjects() }
         sync()
+    }
+
+    private var lastReportedPrompt: [String: String] = [:]
+
+    /// THE SCREEN BEATS THE TITLE for a window whose screen was read: "[ ! ] Action Required"
+    /// is also a finished turn (Codex titles every idle session that way). A real dialog is
+    /// needs_input; the harness's "esc to interrupt" is working; anything else is idle.
+    nonisolated static func refine(_ manifest: [String: [JuliaWindow]], screens: [String: String?]) -> [String: [JuliaWindow]] {
+        manifest.mapValues { windows in
+            windows.map { w in
+                guard let contents = screens[w.key], let state = AttentionPrompt.screenState(contents) else { return w }
+                var w = w; w.state = state; return w
+            }
+        }
     }
 
     /// Window key → the project it is in, so a chip shows only when a window is NEWLY classified
@@ -759,16 +804,32 @@ enum JuliaKeychain {
             guard let self, let client = try? JuliaClient() else { return }
             do {
                 for report in diff.report {
+                    let digest = report.prompt.map { " digest=" + AttentionPrompt.digest($0).prefix(12) } ?? ""
                     var args: [String: Any] = ["token": token, "externalId": report.externalId, "project": report.project,
                         "subtask": report.subtask, "source": "velocity", "machineId": MachineIdentity.machineId]
                     if let handle = report.jumpHandle { args["jumpHandle"] = handle }
                     if let prompt = report.prompt { args["prompt"] = prompt }
                     if let harness = report.harness { args["harness"] = harness }
-                    _ = try await client.call(.report, args)
+                    do {
+                        let value = try await client.call(.report, args) as? [String: Any]
+                        JuliaLog.note("attention: report \(report.externalId.prefix(8)) “\(report.subtask.prefix(40))”\(digest) → ok (\((value?["created"] as? Bool) == true ? "created" : "updated/reopened"))")
+                    } catch {
+                        JuliaLog.note("attention: report \(report.externalId.prefix(8)) “\(report.subtask.prefix(40))”\(digest) → FAILED: \(error.localizedDescription.prefix(200))")
+                        throw error
+                    }
                 }
-                for id in diff.resolve { _ = try await client.call(.resolve, ["token": token, "externalId": id]) }
+                for id in diff.resolve {
+                    do {
+                        _ = try await client.call(.resolve, ["token": token, "externalId": id])
+                        JuliaLog.note("attention: resolve \(id.prefix(8)) → ok")
+                    } catch {
+                        JuliaLog.note("attention: resolve \(id.prefix(8)) → FAILED: \(error.localizedDescription.prefix(200))")
+                        throw error
+                    }
+                }
                 for (project, windows) in workspaceChanges {
-                    _ = try await client.call(.workspace, ["token": token, "project": project, "windows": Self.wire(windows), "source": "velocity"])
+                    do { _ = try await client.call(.workspace, ["token": token, "project": project, "windows": Self.wire(windows), "source": "velocity"]) }
+                    catch { JuliaLog.note("attention: workspace \(project.prefix(30)) → FAILED: \(error.localizedDescription.prefix(200))"); throw error }
                 }
                 // DUAL-WRITE (prefrontal/1): the same manifest, under this machine's id, as ONE
                 // snapshot — every non-empty bucket plus `*`. Best-effort while the component
@@ -780,7 +841,7 @@ enum JuliaKeychain {
             } catch {
                 // The next scan re-reports whatever still differs; the board's
                 // 24h budget sweeps anything this Mac never manages to resolve.
-                                reporter = JuliaReporter(latch: reporter.latch)
+                reporter = JuliaReporter(latch: reporter.latch, reassert: reporter.reassert)
                 workspace = [:]
                 notice?(error.localizedDescription)
             }
@@ -922,42 +983,50 @@ enum JuliaKeychain {
             return .failed(class: "uncertain", why: "\(after.count) process\(after.count == 1 ? "" : "es") still putting out sound after the pause" + (problem.map { " · " + $0 } ?? ""))
         }
         // velocity://type?sig=…&handle=…&text=…&enter=1 — his words, into THAT conversation.
-        // velocity://approve?handle=… — "Yes" to what that tab is asking. The question must
-        // still be on its screen; the harness's own keys go in only once the tab is the
-        // front window's selected one; verified by the question LEAVING the screen.
+        // velocity://approve?handle=…&digest=<sha256 of the prompt he saw> — "Yes" to THAT
+        // question on that tab. The screen's question must hash to the digest (ApproveGate);
+        // the harness's own keys go in ONCE; verified by the question LEAVING the screen.
         if url.host == "approve" {
             guard let tty = JuliaJumpHandle.decode(JuliaWorkspace.query(in: url, "handle") ?? "")?.tty else {
                 return .failed(class: "invalid", why: "That question’s tab isn’t known by its tty — open it and answer there.")
             }
             guard let target = ConversationTTY.target(onTTY: tty) else { return .failed(class: "stale", why: "That tab is gone.") }
-            guard let before = ConversationTTY.contents(ofTTY: tty), let asking = AttentionPrompt.extract(before) else {
+            // BOUND TO WHAT HE SAW: the screen's question must be the one he approved.
+            let before = ConversationTTY.contents(ofTTY: tty)
+            let gate = ApproveGate.before(screen: before, digest: JuliaWorkspace.query(in: url, "digest"), lastReported: lastReportedPrompt[tty])
+            guard case .proceed(let digest) = gate, let before else {
+                if case .refuse(let receipt) = gate {
+                    JuliaLog.note("approve → tty \(tty) REFUSED (\(JuliaWorkspace.query(in: url, "digest").map { "digest " + $0.prefix(12) } ?? "no digest")): \(receipt.line)")
+                    return receipt
+                }
                 return .failed(class: "stale", why: "Nothing is being asked on that tab any more.")
             }
             // The harness the report already read (from the process chain) beats the window
             // title here; the KEYS come from the dialog on screen, not a guess.
             let harness = JuliaWorkspace.query(in: url, "harness") ?? AttentionPrompt.harness(title: target.entry.title)
             let keys = AttentionPrompt.yesKeys(screen: before, harness: harness)
-            JuliaLog.note("approve → tty \(tty) harness=\(harness ?? "?") keys=\(keys.text.isEmpty ? "Return" : keys.text) (background)")
-            func stillAsking(_ screen: String) -> Bool {
-                let t = String(screen.suffix(600)).lowercased()
-                return t.contains("press enter to confirm") || t.contains("enter to confirm") || t.contains("do you want to proceed") || t.range(of: #"[❯›▶]\s*1\.\s*yes"#, options: .regularExpression) != nil
-            }
+            let keyName = keys.text.isEmpty ? "Return" : "“\(keys.text)”"
+            JuliaLog.note("approve → tty \(tty) digest \(digest.prefix(12)) harness=\(harness ?? "?") keys=\(keyName) (background)")
             // IN THE BACKGROUND: Terminal types the key into the exact tab by tty — no
             // foregrounding, no key-window juggling, no beeps. `do script "" in <tab>` sends a
-            // bare Return; a letter sends that letter (+ Return).
-            func inject() -> Bool { JuliaHands.injectToTab(tty: tty, text: keys.enter ? "" : keys.text) }
-            guard inject() else { return .failed(class: "uncertain", why: "Couldn’t reach that tab in Terminal — open it and answer there.") }
-            for attempt in 0..<2 {
-                for _ in 0..<15 {
-                    try? await Task.sleep(for: .milliseconds(200))
-                    guard let now = ConversationTTY.contents(ofTTY: tty) else { continue }
-                    if !stillAsking(now) {
-                        return .verified(method: "prompt-cleared", observed: "answered \(tty) in the background with \(keys.text.isEmpty ? "Return" : "“\(keys.text)”")")
-                    }
-                }
-                if attempt == 0 { JuliaLog.note("approve: \(tty) still asking after 3 s — one more inject"); _ = inject() }
+            // bare Return; a letter sends that letter (+ Return). ONCE: if the dialog lingers we
+            // say so — a second press could answer a dialog he never saw.
+            guard JuliaHands.injectToTab(tty: tty, text: keys.enter ? "" : keys.text) else {
+                return .failed(class: "uncertain", why: "Couldn’t reach that tab in Terminal — open it and answer there.")
             }
-            return .failed(class: "uncertain", why: "Sent yes to \(tty) twice but the question is still on screen — open it and answer there.")
+            // Settled = the same reading twice in a row (a half-redrawn screen is not evidence).
+            var outcome: ApproveGate.After?
+            var previous: ApproveGate.After?
+            for _ in 0..<15 {
+                try? await Task.sleep(for: .milliseconds(200))
+                let now = ApproveGate.after(screen: ConversationTTY.contents(ofTTY: tty), approved: digest)
+                if let now, now != .stillAsking, now == previous { outcome = now; break }
+                previous = now
+                if now == .stillAsking { outcome = .stillAsking }
+            }
+            let receipt = ApproveGate.receipt(outcome, digest: digest, tty: tty, keys: keyName)
+            JuliaLog.note("approve → tty \(tty): \(receipt.line)")
+            return receipt
         }
         // velocity://label?project=<id>&x=<screenX>&y=<screenY> — he dragged a project chip
         // onto an app window on the desktop; assign THAT window (the topmost placeable one

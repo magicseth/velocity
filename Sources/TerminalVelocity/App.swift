@@ -363,6 +363,7 @@ final class SearchPanel: NSPanel {
         updateActiveChip(entry)
     }
 
+    private var lastChipLog = ""
     @MainActor func updateActiveChip(_ entry: WindowEntry) {
         // ANY real window can be tagged to a project — terminals and tabs are the meat, but a
         // Settings or Notion window is taggable too. Skip only Julia's own UI, the desktop, and
@@ -375,7 +376,9 @@ final class SearchPanel: NSPanel {
         let sig = JuliaWorkspace.signature(entry)
         let project = julia.project(forSig: sig)
         if let project { model.visitProject(project) }   // recency for the palette default view
-        JuliaLog.note("chip → \(entry.appName) project=\(project ?? "tag")")
+        // Once per change, not on every activity tick (it logged about once a second).
+        let chipLine = "chip → \(entry.appName) project=\(project ?? "tag")"
+        if chipLine + "#\(wid)" != lastChipLog { JuliaLog.note(chipLine); lastChipLog = chipLine + "#\(wid)" }
         activeChip.show(windowID: wid, sig: sig, project: project)
         lastChipWindow = wid
     }
@@ -445,6 +448,7 @@ final class SearchPanel: NSPanel {
         if Features.experimentalAgents { add("Switch Objectives…  ⌃⌥O", #selector(switchObjectives), to: menu) }
         add("Attention (\(attentionCount))", #selector(showAttention), to: menu)
         add(julia.menuTitle, #selector(toggleJulia), to: menu)
+        add("Julia Backend…", #selector(editJuliaEndpoint), to: menu)
         let notifications = NSMenuItem(title: "Agent Notifications", action: #selector(toggleNotifications), keyEquivalent: "")
         notifications.target = self; notifications.state = attentionNotifications.enabled ? .on : .off
         menu.addItem(notifications)
@@ -509,6 +513,30 @@ final class SearchPanel: NSPanel {
         }
     }
     @objc func toggleJulia() { julia.toggle() }
+    /// Which Julia deployment Velocity talks to (UserDefaults "juliaEndpoint"); empty = the default.
+    @objc func editJuliaEndpoint() {
+        let current = JuliaClient.configuredEndpoint
+        let alert = NSAlert()
+        alert.messageText = "Julia Backend"
+        alert.informativeText = "The Convex deployment Velocity reports to. Leave empty for the default (\(JuliaClient.defaultEndpoint)). Changing it disconnects; connect again afterwards."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+        field.stringValue = current
+        field.placeholderString = JuliaClient.defaultEndpoint
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Save"); alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let next = value.isEmpty ? JuliaClient.defaultEndpoint : value
+        do { _ = try JuliaClient(endpoint: next) } catch {
+            let bad = NSAlert(); bad.messageText = "That isn’t a Julia backend"; bad.informativeText = error.localizedDescription; bad.runModal(); return
+        }
+        guard next != current else { return }
+        if value.isEmpty || next == JuliaClient.defaultEndpoint { UserDefaults.standard.removeObject(forKey: JuliaClient.endpointKey) }
+        else { UserDefaults.standard.set(next, forKey: JuliaClient.endpointKey) }
+        JuliaLog.note("julia endpoint → \(next)")
+        if julia.state != .unpaired { julia.toggle() }   // a token is minted by ONE deployment
+    }
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls { julia.open(url) }
     }

@@ -450,7 +450,7 @@ struct PaletteView: View {
             if entry.attention != .none {
                 Text(entry.attention.label).font(.system(size: 10, weight: .medium))
                     .foregroundStyle(entry.attention == .needsInput ? Color.orange : Color.secondary)
-                    .help(entry.attention == .idle ? "Claude’s title appears idle. This can mean finished, waiting, or paused; it is not proof of an approval prompt." : "State inferred from the terminal title. Press ⌘I to inspect.")
+                    .help(entry.attention == .idle ? "The agent’s title appears idle. This can mean finished, waiting, or paused; it is not proof of an approval prompt." : "State inferred from the terminal title. Press ⌘I to inspect.")
             }
             if entry.audio != .none {
                 Label(entry.audio.label, systemImage: entry.audio.symbol)

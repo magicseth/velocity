@@ -73,6 +73,8 @@ struct PrefrontalCommand: Decodable, Equatable {
         var glow: String?
         /// For `approve`: which harness's dialog is asking (the report read it).
         var harness: String?
+        /// For `approve`: sha256 (lowercase hex) of the normalized prompt he saw (AttentionPrompt.digest).
+        var digest: String?
         /// For `label`: the screen point "x,y" (a string — numbers drop in nested args).
         var point: String?
     }
@@ -114,7 +116,7 @@ struct PrefrontalCommand: Decodable, Equatable {
         case "approve":
             // A "Yes" to the question on that tab's screen — Velocity picks the harness's keys.
             host = "approve"
-            items = [q("handle", args.handle), q("sig", args.sig), q("harness", args.harness)]
+            items = [q("handle", args.handle), q("sig", args.sig), q("harness", args.harness), q("digest", args.digest)]
         case "type":
             host = "type"
             guard args.text != nil else { return nil }
