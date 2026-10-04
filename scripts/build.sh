@@ -15,6 +15,13 @@ case "${VELOCITY_EXPERIMENTAL:-0}" in
     1) swift build -c release -Xswiftc -DVELOCITY_EXPERIMENTAL; APP="$PWD/dist/private/Terminal Velocity.app" ;;
     *) echo "VELOCITY_EXPERIMENTAL must be 0 or 1" >&2; exit 1 ;;
 esac
+# BUILD BESIDE, THEN SWAP. Overwriting the bundle of a RUNNING Velocity in place changed the
+# pages under the live process and macOS killed it ("Code Signature Invalid" — three times on
+# 2026-10-03, each one silently taking ⌥Space with it). A fresh bundle swapped in by rename
+# leaves the running copy's files intact; the next launch picks up the new one.
+FINAL="$APP"
+APP="$FINAL.staging"
+rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/TerminalVelocity "$APP/Contents/MacOS/TerminalVelocity"
 node scripts/directory-inspector.verify.ts
@@ -30,6 +37,11 @@ if [[ "${VELOCITY_EXPERIMENTAL:-0}" == 1 ]]; then
 fi
 codesign --force --options runtime --timestamp=none --entitlements resources/entitlements.plist --sign "$IDENTITY" "$APP"
 codesign --verify --strict "$APP"
+rm -rf "$FINAL.old"
+if [[ -d "$FINAL" ]]; then mv "$FINAL" "$FINAL.old"; fi
+mv "$APP" "$FINAL"
+rm -rf "$FINAL.old"
+APP="$FINAL"
 # Refresh this bundle only; do not reset the user's Launch Services database.
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP"
 echo "Built: $APP"
